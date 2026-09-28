@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
@@ -28,13 +28,15 @@ function renderTools(initialUrl = "/tools") {
 }
 
 describe("CatalogCanvas", () => {
-  it("renders one flat node per functional collection", () => {
+  it("renders one flat node per functional collection", async () => {
     renderLibrary();
 
     for (const name of ["EVIDENCES", "GITHUB", "TAGS", "SKILLS", "TEMPLATES"]) {
-      expect(
-        screen.getByRole("button", { name: new RegExp(name) }),
-      ).toBeVisible();
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: new RegExp(name) }),
+        ).toBeVisible(),
+      );
     }
 
     expect(screen.queryByRole("button", { name: /HARNESS/ })).toBeNull();
@@ -77,7 +79,9 @@ describe("CatalogCanvas", () => {
       "mergeable",
     );
 
-    expect(screen.getByRole("button", { name: /GITHUB/ })).toBeVisible();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /GITHUB/ })).toBeVisible(),
+    );
     expect(screen.queryByRole("button", { name: /EVIDENCES/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /TAGS/ })).toBeNull();
   });

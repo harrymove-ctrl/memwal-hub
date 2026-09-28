@@ -13,18 +13,18 @@ export default function CatalogCanvasCollectionFiles({
   files,
 }: CatalogCanvasCollectionFilesProps) {
   return (
-    <ul className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200/80 bg-card">
+    <ul className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/70 bg-card">
       {files.map((file) => (
         <li key={file.path}>
-          <Flex className="w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:outline-hidden">
+          <Flex className="w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:outline-hidden">
             <FileText
               aria-hidden="true"
-              className="mt-0.5 size-4 shrink-0 text-slate-400"
+              className="mt-0.5 size-4 shrink-0 text-muted-foreground"
             />
 
             <div className="min-w-0 flex-1">
               <Flex className="items-start justify-between gap-3">
-                <p className="font-medium text-zinc-900 text-sm/normal">
+                <p className="text-sm/normal font-medium text-foreground">
                   {file.title}
                 </p>
 
@@ -36,12 +36,12 @@ export default function CatalogCanvasCollectionFiles({
                 >
                   <Download
                     aria-hidden="true"
-                    className="size-5 text-slate-400 hover:text-indigo-600"
+                    className="size-5 text-muted-foreground hover:text-primary"
                   />
                 </button>
               </Flex>
 
-              <p className="mt-2 line-clamp-3 text-muted-foreground text-xs/relaxed">
+              <p className="mt-2 line-clamp-3 text-xs/relaxed text-muted-foreground">
                 {file.description}
               </p>
 
@@ -49,7 +49,7 @@ export default function CatalogCanvasCollectionFiles({
                 href={file.url}
                 target="_blank"
                 rel="noreferrer"
-                className="mt-1.5 block truncate font-mono text-[10px] text-blue-500 underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden"
+                className="mt-1.5 block truncate font-mono text-[10px] text-primary underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden"
               >
                 {file.path}
               </a>

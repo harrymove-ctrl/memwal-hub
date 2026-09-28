@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Download, GitPullRequest } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import Flex from "@/components/ui/flex";
 import {
   Sheet,
@@ -32,7 +33,7 @@ function CollectionSection({
   return (
     <section className="space-y-2.5">
       <Flex className="items-center justify-between gap-3">
-        <h3 className="font-mono text-xs font-semibold tracking-wider text-zinc-700 uppercase">
+        <h3 className="font-mono text-xs font-semibold tracking-wider text-foreground uppercase">
           {label}
         </h3>
 
@@ -78,7 +79,7 @@ export default function CatalogCanvasCollectionDetail({
         side="right"
         className="flex w-full flex-col gap-0 p-0 data-[side=right]:md:max-w-160"
       >
-        <SheetHeader className="border-b border-zinc-100 bg-zinc-50/50 px-6 py-5 pr-14">
+        <SheetHeader className="border-b border-border/70 bg-muted/40 px-6 py-5 pr-14">
           <SheetTitle className="text-xl font-bold tracking-tight">
             {shown.label}
           </SheetTitle>
@@ -90,20 +91,24 @@ export default function CatalogCanvasCollectionDetail({
 
         <div className="flex-1 space-y-6 overflow-y-auto p-6">
           <CollectionSection label="Introduction">
-            <p className="text-zinc-600 text-sm/relaxed">{shown.summary}</p>
+            <p className="text-sm/relaxed text-muted-foreground">
+              {shown.summary}
+            </p>
           </CollectionSection>
 
           <CollectionSection
             label={`Files (${files.length})`}
             action={
-              <a
-                href={archive.url}
-                download={archive.name}
-                className="flex shrink-0 items-center gap-1.5 rounded-lg bg-zinc-900 px-3 py-2 font-mono text-[11px] font-medium text-white transition-colors hover:bg-zinc-800 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden"
+              <Button
+                asChild
+                size="sm"
+                className="shrink-0 font-mono text-[11px]"
               >
-                <Download aria-hidden="true" className="size-3.5" />
-                Download all ({archive.fileCount})
-              </a>
+                <a href={archive.url} download={archive.name}>
+                  <Download aria-hidden="true" />
+                  Download all ({archive.fileCount})
+                </a>
+              </Button>
             }
           >
             <CatalogCanvasCollectionFiles files={files} />
@@ -118,12 +123,12 @@ export default function CatalogCanvasCollectionDetail({
           </CollectionSection>
         </div>
 
-        <Flex className="items-center gap-2 flex-wrap border-t border-zinc-100 bg-zinc-50/50 px-6 py-4 text-xs text-muted-foreground">
+        <Flex className="flex-wrap items-center gap-2 border-t border-border/70 bg-muted/40 px-6 py-4 text-xs text-muted-foreground">
           <a
             href={GITHUB_REPOSITORY_URL}
             target="_blank"
             rel="noreferrer"
-            className="flex items-center gap-1.5 font-mono text-[11px] text-indigo-600 hover:underline"
+            className="flex items-center gap-1.5 font-mono text-[11px] text-primary hover:underline"
           >
             <GitPullRequest aria-hidden="true" className="size-3.5" />
             Contribute one of your own

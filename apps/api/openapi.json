@@ -9,6 +9,154 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/agent-auth/device": {
+      "post": {
+        "tags": ["agent auth"],
+        "operationId": "start_device_authorization",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartDeviceAuthorization"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Device authorization started; poll with the device code",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceAuthorizationStarted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid agent label",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agent-auth/device/decision": {
+      "post": {
+        "tags": ["agent auth"],
+        "operationId": "decide_device_authorization",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecideDeviceAuthorization"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Authorization approved or denied"
+          },
+          "401": {
+            "description": "Hub login required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown, expired, or already-decided code",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agent-auth/device/pending": {
+      "get": {
+        "tags": ["agent auth"],
+        "operationId": "list_pending_authorizations",
+        "responses": {
+          "200": {
+            "description": "Pending authorization requests awaiting this operator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PendingDeviceAuthorization"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Hub login required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agent-auth/device/token": {
+      "post": {
+        "tags": ["agent auth"],
+        "operationId": "poll_device_authorization",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PollDeviceAuthorization"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Current authorization status; the key appears exactly once after approval",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceAuthorizationToken"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown or expired device code",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/agent-connections": {
       "get": {
         "tags": ["agent connections"],
@@ -863,10 +1011,205 @@
           }
         }
       }
+    },
+    "/reasoning/authorize": {
+      "post": {
+        "tags": ["reasoning"],
+        "operationId": "authorize_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthorizeActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Action authorized or blocked based on contract boundaries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionDecision"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Gateway key or active authorization required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reasoning/events": {
+      "get": {
+        "tags": ["reasoning"],
+        "operationId": "list_events",
+        "responses": {
+          "200": {
+            "description": "Latest reasoning checkpoint events, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ReasoningEvent"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reasoning/events/daily": {
+      "get": {
+        "tags": ["reasoning"],
+        "operationId": "daily_stats",
+        "responses": {
+          "200": {
+            "description": "Per-day reasoning checkpoint counts for the last 365 days",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ReasoningDailyStat"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reasoning/plan": {
+      "post": {
+        "tags": ["reasoning"],
+        "operationId": "plan_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePlanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Structured execution plan generated by SERV Reasoning",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionPlan"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Gateway key or active authorization required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reasoning/verify": {
+      "post": {
+        "tags": ["reasoning"],
+        "operationId": "verify_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyOutcomeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Outcome verification verdict evaluated by SERV Reasoning",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Gateway key or active authorization required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "ActionDecision": {
+        "type": "object",
+        "required": [
+          "decision_id",
+          "allowed",
+          "status",
+          "reason",
+          "boundary_enforced",
+          "audited_at",
+          "reasoner_model"
+        ],
+        "properties": {
+          "allowed": {
+            "type": "boolean"
+          },
+          "audited_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "boundary_enforced": {
+            "type": "string"
+          },
+          "decision_id": {
+            "type": "string"
+          },
+          "matched_contract": {
+            "type": ["string", "null"]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "reasoner_model": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
       "AgentAuthorizationPrompt": {
         "type": "object",
         "required": [
@@ -1202,6 +1545,34 @@
           }
         }
       },
+      "AuthorizeActionRequest": {
+        "type": "object",
+        "required": ["task", "action"],
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "active_contracts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "parameters": {},
+          "plan_id": {
+            "type": ["string", "null"]
+          },
+          "step_id": {
+            "type": ["string", "null"]
+          },
+          "target": {
+            "type": ["string", "null"]
+          },
+          "task": {
+            "type": "string"
+          }
+        }
+      },
       "CompleteAuthorizationRequest": {
         "type": "object",
         "required": ["callback_url"],
@@ -1232,6 +1603,27 @@
           }
         }
       },
+      "CreatePlanRequest": {
+        "type": "object",
+        "required": ["task"],
+        "properties": {
+          "available_skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "context_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "task": {
+            "type": "string"
+          }
+        }
+      },
       "CreatedGatewayKey": {
         "allOf": [
           {
@@ -1257,6 +1649,67 @@
           }
         }
       },
+      "DecideDeviceAuthorization": {
+        "type": "object",
+        "required": ["user_code", "approve"],
+        "properties": {
+          "approve": {
+            "type": "boolean",
+            "description": "true approves and issues a gateway key; false denies."
+          },
+          "user_code": {
+            "type": "string",
+            "description": "The short user code shown by the agent, e.g. \"XK7P-29QD\"."
+          }
+        }
+      },
+      "DeviceAuthorizationStarted": {
+        "type": "object",
+        "required": [
+          "device_code",
+          "user_code",
+          "verification_uri",
+          "expires_in_seconds",
+          "poll_interval_seconds"
+        ],
+        "properties": {
+          "device_code": {
+            "type": "string",
+            "description": "Secret the agent polls with. Never shown to the operator."
+          },
+          "expires_in_seconds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "poll_interval_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "user_code": {
+            "type": "string",
+            "description": "Short code the operator types or clicks to approve, e.g. \"XK7P-29QD\"."
+          },
+          "verification_uri": {
+            "type": "string",
+            "description": "Where the operator approves the request."
+          }
+        }
+      },
+      "DeviceAuthorizationToken": {
+        "type": "object",
+        "required": ["status"],
+        "properties": {
+          "key": {
+            "type": ["string", "null"],
+            "description": "The gateway key. Present only on the first poll after approval."
+          },
+          "status": {
+            "type": "string",
+            "description": "\"pending\", \"approved\" (key present exactly once), or \"denied\"."
+          }
+        }
+      },
       "ErrorResponse": {
         "type": "object",
         "required": ["code", "message"],
@@ -1266,6 +1719,62 @@
           },
           "message": {
             "type": "string"
+          }
+        }
+      },
+      "ExecutionPlan": {
+        "type": "object",
+        "required": [
+          "plan_id",
+          "intent",
+          "summary",
+          "required_contracts",
+          "steps",
+          "prohibited_actions",
+          "verification_criteria",
+          "created_at",
+          "reasoner_model"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "intent": {
+            "type": "string"
+          },
+          "plan_id": {
+            "type": "string"
+          },
+          "prohibited_actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reasoner_model": {
+            "type": "string"
+          },
+          "required_contracts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanStep"
+            }
+          },
+          "summary": {
+            "type": "string"
+          },
+          "verification_criteria": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -1323,6 +1832,139 @@
           }
         }
       },
+      "PendingDeviceAuthorization": {
+        "type": "object",
+        "required": ["user_code", "agent_label", "created_at", "expires_at"],
+        "properties": {
+          "agent_label": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "user_code": {
+            "type": "string"
+          }
+        }
+      },
+      "PlanStep": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "type": "string"
+          },
+          "rationale": {
+            "type": ["string", "null"]
+          },
+          "risk": {
+            "type": "string"
+          },
+          "target": {
+            "type": ["string", "null"]
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "PollDeviceAuthorization": {
+        "type": "object",
+        "required": ["device_code"],
+        "properties": {
+          "device_code": {
+            "type": "string"
+          }
+        }
+      },
+      "ReasoningDailyStat": {
+        "type": "object",
+        "required": [
+          "day",
+          "total",
+          "plans",
+          "allowed",
+          "blocked",
+          "certified"
+        ],
+        "properties": {
+          "allowed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "blocked": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "certified": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "day": {
+            "type": "string",
+            "description": "Calendar day in ISO format, e.g. \"2026-09-26\"."
+          },
+          "plans": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ReasoningEvent": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "task",
+          "reasoner_model",
+          "outcome",
+          "detail",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "reasoner_model": {
+            "type": "string"
+          },
+          "task": {
+            "type": "string"
+          }
+        }
+      },
       "RegisterRequest": {
         "type": "object",
         "required": ["username", "password"],
@@ -1355,6 +1997,93 @@
             "$ref": "#/components/schemas/AgentProvider"
           }
         }
+      },
+      "StartDeviceAuthorization": {
+        "type": "object",
+        "required": ["agent_label"],
+        "properties": {
+          "agent_label": {
+            "type": "string",
+            "description": "Human-readable label the approving operator sees, e.g. \"Claude Code on MacBook\"."
+          }
+        }
+      },
+      "VerificationResult": {
+        "type": "object",
+        "required": [
+          "verification_id",
+          "passed",
+          "confidence",
+          "findings",
+          "unsatisfied_criteria",
+          "recommendation",
+          "verified_at",
+          "reasoner_model"
+        ],
+        "properties": {
+          "confidence": {
+            "type": "number",
+            "format": "float"
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "reasoner_model": {
+            "type": "string"
+          },
+          "recommendation": {
+            "type": "string"
+          },
+          "unsatisfied_criteria": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "verification_id": {
+            "type": "string"
+          },
+          "verified_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "VerifyOutcomeRequest": {
+        "type": "object",
+        "required": ["task", "completed_steps", "evidence"],
+        "properties": {
+          "completed_steps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "modified_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "plan_id": {
+            "type": ["string", "null"]
+          },
+          "task": {
+            "type": "string"
+          },
+          "test_output": {
+            "type": ["string", "null"]
+          }
+        }
       }
     }
   },
@@ -1374,6 +2103,14 @@
     {
       "name": "gateway keys",
       "description": "Revocable keys for provider-specific gateway access"
+    },
+    {
+      "name": "reasoning",
+      "description": "SERV Reasoning control plane for agent planning, boundary authorization, and outcome verification"
+    },
+    {
+      "name": "agent auth",
+      "description": "Device authorization flow for agents to obtain scoped gateway keys"
     },
     {
       "name": "system",

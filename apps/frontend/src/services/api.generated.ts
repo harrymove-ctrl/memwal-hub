@@ -4,6 +4,70 @@
  */
 
 export interface paths {
+  "/agent-auth/device": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["start_device_authorization"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/agent-auth/device/decision": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["decide_device_authorization"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/agent-auth/device/pending": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["list_pending_authorizations"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/agent-auth/device/token": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["poll_device_authorization"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/agent-connections": {
     parameters: {
       query?: never;
@@ -308,10 +372,101 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/reasoning/authorize": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["authorize_handler"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/reasoning/events": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["list_events"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/reasoning/events/daily": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["daily_stats"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/reasoning/plan": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["plan_handler"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/reasoning/verify": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["verify_handler"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
+    ActionDecision: {
+      allowed: boolean;
+      /** Format: date-time */
+      audited_at: string;
+      boundary_enforced: string;
+      decision_id: string;
+      matched_contract?: string | null;
+      reason: string;
+      reasoner_model: string;
+      status: string;
+    };
     AgentAuthorizationPrompt: {
       authorization_url: string;
       /** Format: date-time */
@@ -426,6 +581,15 @@ export interface components {
       recovery_email?: string | null;
       username: string;
     };
+    AuthorizeActionRequest: {
+      action: string;
+      active_contracts?: string[];
+      parameters?: unknown;
+      plan_id?: string | null;
+      step_id?: string | null;
+      target?: string | null;
+      task: string;
+    };
     CompleteAuthorizationRequest: {
       callback_url: string;
     };
@@ -436,15 +600,56 @@ export interface components {
       reason: string;
       telegram: string;
     };
+    CreatePlanRequest: {
+      available_skills?: string[];
+      context_files?: string[];
+      task: string;
+    };
     CreatedGatewayKey: components["schemas"]["GatewayKey"] & {
       key: string;
     };
     DecideAgentPoolJoinRequest: {
       status: components["schemas"]["AgentPoolRequestStatus"];
     };
+    DecideDeviceAuthorization: {
+      /** @description true approves and issues a gateway key; false denies. */
+      approve: boolean;
+      /** @description The short user code shown by the agent, e.g. "XK7P-29QD". */
+      user_code: string;
+    };
+    DeviceAuthorizationStarted: {
+      /** @description Secret the agent polls with. Never shown to the operator. */
+      device_code: string;
+      /** Format: int64 */
+      expires_in_seconds: number;
+      /** Format: int32 */
+      poll_interval_seconds: number;
+      /** @description Short code the operator types or clicks to approve, e.g. "XK7P-29QD". */
+      user_code: string;
+      /** @description Where the operator approves the request. */
+      verification_uri: string;
+    };
+    DeviceAuthorizationToken: {
+      /** @description The gateway key. Present only on the first poll after approval. */
+      key?: string | null;
+      /** @description "pending", "approved" (key present exactly once), or "denied". */
+      status: string;
+    };
     ErrorResponse: {
       code: string;
       message: string;
+    };
+    ExecutionPlan: {
+      /** Format: date-time */
+      created_at: string;
+      intent: string;
+      plan_id: string;
+      prohibited_actions: string[];
+      reasoner_model: string;
+      required_contracts: string[];
+      steps: components["schemas"]["PlanStep"][];
+      summary: string;
+      verification_criteria: string[];
     };
     GatewayKey: {
       /** Format: date-time */
@@ -466,6 +671,51 @@ export interface components {
       password: string;
       username: string;
     };
+    PendingDeviceAuthorization: {
+      agent_label: string;
+      /** Format: date-time */
+      created_at: string;
+      /** Format: date-time */
+      expires_at: string;
+      user_code: string;
+    };
+    PlanStep: {
+      action?: string;
+      depends_on?: string[];
+      id: string;
+      rationale?: string | null;
+      risk?: string;
+      target?: string | null;
+      title?: string;
+    };
+    PollDeviceAuthorization: {
+      device_code: string;
+    };
+    ReasoningDailyStat: {
+      /** Format: int64 */
+      allowed: number;
+      /** Format: int64 */
+      blocked: number;
+      /** Format: int64 */
+      certified: number;
+      /** @description Calendar day in ISO format, e.g. "2026-09-26". */
+      day: string;
+      /** Format: int64 */
+      plans: number;
+      /** Format: int64 */
+      total: number;
+    };
+    ReasoningEvent: {
+      /** Format: date-time */
+      created_at: string;
+      detail: string;
+      /** Format: uuid */
+      id: string;
+      kind: string;
+      outcome: string;
+      reasoner_model: string;
+      task: string;
+    };
     RegisterRequest: {
       password: string;
       recovery_email?: string | null;
@@ -477,6 +727,30 @@ export interface components {
     StartAgentConnectionRequest: {
       provider: components["schemas"]["AgentProvider"];
     };
+    StartDeviceAuthorization: {
+      /** @description Human-readable label the approving operator sees, e.g. "Claude Code on MacBook". */
+      agent_label: string;
+    };
+    VerificationResult: {
+      /** Format: float */
+      confidence: number;
+      findings: string[];
+      passed: boolean;
+      reasoner_model: string;
+      recommendation: string;
+      unsatisfied_criteria: string[];
+      verification_id: string;
+      /** Format: date-time */
+      verified_at: string;
+    };
+    VerifyOutcomeRequest: {
+      completed_steps: string[];
+      evidence: string;
+      modified_files?: string[];
+      plan_id?: string | null;
+      task: string;
+      test_output?: string | null;
+    };
   };
   responses: never;
   parameters: never;
@@ -486,6 +760,141 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+  start_device_authorization: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["StartDeviceAuthorization"];
+      };
+    };
+    responses: {
+      /** @description Device authorization started; poll with the device code */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DeviceAuthorizationStarted"];
+        };
+      };
+      /** @description Invalid agent label */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
+  decide_device_authorization: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["DecideDeviceAuthorization"];
+      };
+    };
+    responses: {
+      /** @description Authorization approved or denied */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Hub login required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      /** @description Unknown, expired, or already-decided code */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
+  list_pending_authorizations: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Pending authorization requests awaiting this operator */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PendingDeviceAuthorization"][];
+        };
+      };
+      /** @description Hub login required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
+  poll_device_authorization: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PollDeviceAuthorization"];
+      };
+    };
+    responses: {
+      /** @description Current authorization status; the key appears exactly once after approval */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DeviceAuthorizationToken"];
+        };
+      };
+      /** @description Unknown or expired device code */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
   list_connections: {
     parameters: {
       query?: never;
@@ -1232,6 +1641,145 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["HealthResponse"];
+        };
+      };
+    };
+  };
+  authorize_handler: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AuthorizeActionRequest"];
+      };
+    };
+    responses: {
+      /** @description Action authorized or blocked based on contract boundaries */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ActionDecision"];
+        };
+      };
+      /** @description Gateway key or active authorization required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
+  list_events: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Latest reasoning checkpoint events, newest first */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReasoningEvent"][];
+        };
+      };
+    };
+  };
+  daily_stats: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Per-day reasoning checkpoint counts for the last 365 days */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReasoningDailyStat"][];
+        };
+      };
+    };
+  };
+  plan_handler: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreatePlanRequest"];
+      };
+    };
+    responses: {
+      /** @description Structured execution plan generated by SERV Reasoning */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ExecutionPlan"];
+        };
+      };
+      /** @description Gateway key or active authorization required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
+  verify_handler: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["VerifyOutcomeRequest"];
+      };
+    };
+    responses: {
+      /** @description Outcome verification verdict evaluated by SERV Reasoning */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["VerificationResult"];
+        };
+      };
+      /** @description Gateway key or active authorization required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
         };
       };
     };

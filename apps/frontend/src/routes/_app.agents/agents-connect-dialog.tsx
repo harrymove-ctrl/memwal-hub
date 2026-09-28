@@ -209,7 +209,7 @@ export default function AgentsConnectDialog({
       "popup,width=720,height=820",
     );
     if (!popup) {
-      setPopupError("Allow popups for Hub William, then try again.");
+      setPopupError("Allow popups for Bew Harness, then try again.");
       return;
     }
     popup.opener = null;

@@ -20,7 +20,7 @@ export const links: Route.LinksFunction = () => [
 
 // eslint-disable-next-line react-refresh/only-export-components
 export const meta: Route.MetaFunction = () => {
-  const title = "Hub William · AI agent workspace";
+  const title = "Bew Harness · AI agent workspace";
   const description = `A modular workspace and deterministic runtime for engineering agents — harnesses, skills, hooks, and live activity observation.`;
   const imageUrl = `https://res.cloudinary.com/synasapmob/image/upload/v1788697028/3039cfe2d23a5f062d0962c900684368.jpg`;
 

@@ -118,7 +118,7 @@ export default function AgentsRequestDialog({
           </div>
 
           <p className="rounded-lg bg-zinc-50 p-2.5 text-xs/relaxed text-muted-foreground">
-            Hub William only lists sharing availability. Any bill splitting or
+            Bew Harness only lists sharing availability. Any bill splitting or
             payment conversation happens directly on Telegram.
           </p>
 

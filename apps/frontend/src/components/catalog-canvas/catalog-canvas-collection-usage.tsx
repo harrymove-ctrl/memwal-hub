@@ -3,7 +3,7 @@ import Flex from "@/components/ui/flex";
 import catalogService, { type CatalogCollection } from "@/services/catalog";
 
 const token =
-  "rounded-lg border border-zinc-200/80 bg-card px-2 py-1 font-mono text-[11px] text-zinc-800";
+  "rounded-lg border border-border/70 bg-card px-2 py-1 font-mono text-[11px] text-foreground";
 
 interface CatalogCanvasCollectionUsageProps {
   collection: CatalogCollection;
@@ -36,7 +36,7 @@ export default function CatalogCanvasCollectionUsage({
   if (invocations.length > 0) {
     return (
       <div className="space-y-3">
-        <p className="text-zinc-600 text-sm/relaxed">
+        <p className="text-sm/relaxed text-muted-foreground">
           Install the Documents collection so its dispatcher and source paths
           stay together, then include one of these tokens in the prompt:
         </p>
@@ -56,7 +56,7 @@ export default function CatalogCanvasCollectionUsage({
 
   if (collection.id === "evidences") {
     return (
-      <p className="text-zinc-600 text-sm/relaxed">
+      <p className="text-sm/relaxed text-muted-foreground">
         Evidence contracts have no prompt token. The installed AGENTS dispatcher
         loads them automatically before tests, checks and implementation-history
         writes, so copying one file without the dispatcher does not activate it.
@@ -66,7 +66,7 @@ export default function CatalogCanvasCollectionUsage({
 
   if (collection.id === "templates") {
     return (
-      <p className="text-zinc-600 text-sm/relaxed">
+      <p className="text-sm/relaxed text-muted-foreground">
         Templates are consumed by the workflow that creates the matching
         artifact. Download one for manual use, or install Documents to keep the
         dispatcher and template paths connected.
@@ -75,7 +75,7 @@ export default function CatalogCanvasCollectionUsage({
   }
 
   return (
-    <p className="text-zinc-600 text-sm/relaxed">
+    <p className="text-sm/relaxed text-muted-foreground">
       This collection is loaded through the installed AGENTS dispatcher when its
       documented action applies; it is not invoked by a standalone tag.
     </p>

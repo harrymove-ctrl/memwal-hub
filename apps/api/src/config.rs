@@ -25,6 +25,9 @@ pub struct AppConfig {
     pub grok_client_id: String,
     pub grok_client_version: String,
     pub deepseek_api_url: String,
+    pub serv_reasoning_url: String,
+    pub serv_reasoning_api_key: Option<String>,
+    pub serv_reasoning_model: String,
 }
 
 #[derive(Debug)]
@@ -117,6 +120,15 @@ impl AppConfig {
                 .unwrap_or_else(|_| "https://api.deepseek.com".to_owned())
                 .trim_end_matches('/')
                 .to_owned(),
+            serv_reasoning_url: env::var("SERV_REASONING_URL")
+                .unwrap_or_else(|_| "https://inference-api.openserv.ai".to_owned())
+                .trim_end_matches('/')
+                .to_owned(),
+            serv_reasoning_api_key: env::var("SERV_REASONING_API_KEY")
+                .ok()
+                .filter(|k| !k.trim().is_empty()),
+            serv_reasoning_model: env::var("SERV_REASONING_MODEL")
+                .unwrap_or_else(|_| "gemini-3.8-flash".to_owned()),
         })
     }
 }
@@ -147,6 +159,9 @@ impl Default for AppConfig {
             grok_client_id: "b1a00492-073a-47ea-816f-4c329264a828".to_owned(),
             grok_client_version: "1.0.30".to_owned(),
             deepseek_api_url: "https://api.deepseek.com".to_owned(),
+            serv_reasoning_url: "https://inference-api.openserv.ai".to_owned(),
+            serv_reasoning_api_key: None,
+            serv_reasoning_model: "gemini-3.8-flash".to_owned(),
         }
     }
 }

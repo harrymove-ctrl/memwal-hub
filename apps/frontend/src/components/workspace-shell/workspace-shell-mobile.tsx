@@ -57,7 +57,7 @@ export default function WorkspaceShellMobile() {
             <SheetHeader className="sr-only">
               <SheetTitle>Navigation</SheetTitle>
               <SheetDescription>
-                Move between Hub William pages.
+                Move between Bew Harness pages.
               </SheetDescription>
             </SheetHeader>
 
@@ -74,7 +74,7 @@ export default function WorkspaceShellMobile() {
           <Center className="size-5 rounded bg-zinc-900 font-mono text-[10px] text-white">
             W
           </Center>
-          Hub-William
+          Bew-Harness
         </Link>
       </Flex>
 

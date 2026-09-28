@@ -1,3 +1,4 @@
+mod agent_auth;
 mod agent_pools;
 mod auth;
 mod config;
@@ -7,6 +8,7 @@ mod gateway;
 mod health;
 mod openapi;
 mod pool_share;
+pub mod reasoning;
 mod telegram;
 mod telegram_catalogue;
 mod usage;
@@ -73,6 +75,19 @@ pub use telegram_catalogue::{
 use telegram_catalogue::{
     adjust_product, catalogue, create_product, full_catalogue, get_product, restock_product,
 };
+pub use reasoning::{
+    ActionDecision, AuthorizeActionRequest, CreatePlanRequest, ExecutionPlan, PlanStep,
+    ReasoningDailyStat, ReasoningEvent, VerificationResult, VerifyOutcomeRequest,
+};
+use reasoning::{authorize_handler, daily_stats, list_events, plan_handler, verify_handler};
+pub use agent_auth::{
+    DecideDeviceAuthorization, DeviceAuthorizationStarted, DeviceAuthorizationToken,
+    PendingDeviceAuthorization, PollDeviceAuthorization, StartDeviceAuthorization,
+};
+use agent_auth::{
+    decide_device_authorization, list_pending_authorizations, poll_device_authorization,
+    start_device_authorization,
+};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -108,7 +123,12 @@ pub fn app(state: AppState) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::list(browser_origins))
         .allow_methods([Method::GET, Method::POST, Method::DELETE])
-        .allow_headers([AUTHORIZATION, CONTENT_TYPE])
+        .allow_headers([
+            AUTHORIZATION,
+            CONTENT_TYPE,
+            axum::http::HeaderName::from_static("x-serv-api-key"),
+            axum::http::HeaderName::from_static("x-serv-model"),
+        ])
         .allow_credentials(true);
 
     let gateway_routes = Router::new()
@@ -212,6 +232,21 @@ pub fn app(state: AppState) -> Router {
         )
         .route("/gateway-keys", get(list_keys).post(create_key))
         .route("/gateway-keys/{key_id}", axum::routing::delete(revoke_key))
+        .route("/reasoning/plan", post(plan_handler))
+        .route("/reasoning/authorize", post(authorize_handler))
+        .route("/reasoning/verify", post(verify_handler))
+        .route("/reasoning/events", get(list_events))
+        .route("/reasoning/events/daily", get(daily_stats))
+        .route("/agent-auth/device", post(start_device_authorization))
+        .route("/agent-auth/device/token", post(poll_device_authorization))
+        .route(
+            "/agent-auth/device/pending",
+            get(list_pending_authorizations),
+        )
+        .route(
+            "/agent-auth/device/decision",
+            post(decide_device_authorization),
+        )
         .merge(gateway_routes)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .layer(cors)
@@ -400,5 +435,59 @@ mod tests {
                 .get("access-control-allow-origin")
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn reasoning_endpoints_require_authorization() {
+        let state = AppState {
+            config: AppConfig::default(),
+            http: Client::new(),
+            gateway_http: Client::new(),
+            pool: PgPoolOptions::new()
+                .connect_lazy("postgres://localhost/hub_william_test")
+                .expect("test database URL should parse"),
+        };
+
+        let response = app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/reasoning/plan")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"task":"fix bug"}"#))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("response should arrive");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let response = app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/reasoning/authorize")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"task":"fix bug","action":"push"}"#))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("response should arrive");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let response = app(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/reasoning/verify")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"task":"fix bug","completed_steps":[],"evidence":"none"}"#))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("response should arrive");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }

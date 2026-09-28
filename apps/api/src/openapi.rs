@@ -8,6 +8,10 @@ use crate::{
     CreatedGatewayKey, DecideAgentPoolJoinRequest, ErrorResponse, GatewayKey, HealthResponse,
     InviteAgentPoolMember, LoginRequest, RegisterRequest, SessionResponse,
     StartAgentConnectionRequest,
+    ActionDecision, AuthorizeActionRequest, CreatePlanRequest, ExecutionPlan, PlanStep,
+    ReasoningDailyStat, ReasoningEvent, VerificationResult, VerifyOutcomeRequest,
+    DecideDeviceAuthorization, DeviceAuthorizationStarted, DeviceAuthorizationToken,
+    PendingDeviceAuthorization, PollDeviceAuthorization, StartDeviceAuthorization,
 };
 
 #[derive(OpenApi)]
@@ -38,7 +42,16 @@ use crate::{
         crate::connections::disconnect,
         crate::gateway::create_key,
         crate::gateway::list_keys,
-        crate::gateway::revoke_key
+        crate::gateway::revoke_key,
+        crate::reasoning::plan_handler,
+        crate::reasoning::authorize_handler,
+        crate::reasoning::verify_handler,
+        crate::reasoning::list_events,
+        crate::reasoning::daily_stats,
+        crate::agent_auth::start_device_authorization,
+        crate::agent_auth::poll_device_authorization,
+        crate::agent_auth::list_pending_authorizations,
+        crate::agent_auth::decide_device_authorization
     ),
     components(schemas(
         AuthenticatedUser,
@@ -65,13 +78,30 @@ use crate::{
         InviteAgentPoolMember,
         RegisterRequest,
         SessionResponse,
-        StartAgentConnectionRequest
+        StartAgentConnectionRequest,
+        ActionDecision,
+        AuthorizeActionRequest,
+        CreatePlanRequest,
+        ExecutionPlan,
+        PlanStep,
+        VerificationResult,
+        VerifyOutcomeRequest,
+        ReasoningEvent,
+        ReasoningDailyStat,
+        DecideDeviceAuthorization,
+        DeviceAuthorizationStarted,
+        DeviceAuthorizationToken,
+        PendingDeviceAuthorization,
+        PollDeviceAuthorization,
+        StartDeviceAuthorization
     )),
     tags(
         (name = "auth", description = "Browser account sessions"),
         (name = "agent connections", description = "Encrypted upstream provider connection lifecycle"),
         (name = "agent pools", description = "Public connected account pools and authenticated membership requests"),
         (name = "gateway keys", description = "Revocable keys for provider-specific gateway access"),
+        (name = "reasoning", description = "SERV Reasoning control plane for agent planning, boundary authorization, and outcome verification"),
+        (name = "agent auth", description = "Device authorization flow for agents to obtain scoped gateway keys"),
         (name = "system", description = "Runtime health and diagnostics")
     )
 )]

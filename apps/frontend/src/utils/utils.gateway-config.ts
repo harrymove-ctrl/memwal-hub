@@ -69,7 +69,7 @@ export function gatewayAgentConfigs(
         `model_provider = "hub-william"`,
         "",
         "[model_providers.hub-william]",
-        `name = "Hub William"`,
+        `name = "Bew Harness"`,
         `base_url = "${openaiBaseUrl}"`,
         `experimental_bearer_token = "${key}"`,
         `wire_api = "responses"`,

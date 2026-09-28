@@ -2,6 +2,7 @@ import { Link, NavLink, type NavLinkRenderProps } from "react-router";
 import { tv } from "tailwind-variants";
 
 import Center from "@/components/ui/center";
+import ThemeToggle from "@/components/ui/theme-toggle";
 import assetPath from "@/utils/utils.asset-path";
 
 import WorkspaceShellAccount from "./workspace-shell-account";
@@ -51,7 +52,7 @@ function WorkspaceBrand({ onNavigate }: WorkspaceBrandProps) {
             />
           </Center>
 
-          <p className="text-xs">Hub-William</p>
+          <p className="text-xs">Bew-Harness</p>
         </Center>
 
         <div className="rounded border border-zinc-200/80 bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] text-zinc-700">
@@ -141,6 +142,13 @@ export default function WorkspaceShellSidebar({
       </div>
 
       <WorkspaceNavigation onNavigate={onNavigate} />
+
+      <div className="mb-2 flex items-center justify-between px-1">
+        <span className="font-mono text-[10px] tracking-widest text-muted-foreground uppercase">
+          Theme
+        </span>
+        <ThemeToggle />
+      </div>
 
       <WorkspaceShellAccount onNavigate={onNavigate} />
     </div>

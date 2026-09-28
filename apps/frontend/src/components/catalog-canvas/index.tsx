@@ -62,7 +62,7 @@ export default function CatalogCanvas({
   return (
     <section
       aria-labelledby="catalog-title"
-      className="canvas-grid-dots flex min-h-0 flex-1 flex-col overflow-hidden bg-slate-50"
+      className="canvas-grid-dots flex min-h-0 flex-1 flex-col overflow-hidden bg-background"
     >
       <h2 id="catalog-title" className="sr-only">
         Agent catalogue collections
@@ -80,18 +80,19 @@ export default function CatalogCanvas({
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-6 sm:px-6 sm:py-8">
         {visibleCollections.length > 0 ? (
           <ul className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-            {visibleCollections.map((collection) => (
+            {visibleCollections.map((collection, index) => (
               <CatalogCanvasCollectionCard
                 key={collection.id}
                 collection={collection}
+                index={index}
                 onSelect={selectCollection}
               />
             ))}
           </ul>
         ) : (
-          <div className="rounded-2xl border border-dashed border-slate-300 bg-card/80 px-6 py-16 text-center">
-            <p className="text-sm font-medium text-zinc-800">
-              No collection matches “{searchQuery}”.
+          <div className="rounded-2xl border border-dashed border-border bg-card/80 px-6 py-16 text-center">
+            <p className="text-sm font-medium text-foreground">
+              No collection matches "{searchQuery}".
             </p>
 
             <p className="mt-1 text-xs text-muted-foreground">

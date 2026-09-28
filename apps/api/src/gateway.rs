@@ -72,9 +72,9 @@ struct GatewayKeyRow {
 }
 
 #[derive(Debug, FromRow)]
-struct AuthorizedGatewayKey {
-    id: Uuid,
-    user_id: Uuid,
+pub(crate) struct AuthorizedGatewayKey {
+    pub id: Uuid,
+    pub user_id: Uuid,
 }
 
 #[derive(Debug, FromRow)]
@@ -1211,7 +1211,7 @@ async fn upstream_response(
         })
 }
 
-async fn authorize_gateway_key(
+pub(crate) async fn authorize_gateway_key(
     state: &AppState,
     headers: &HeaderMap,
 ) -> Result<AuthorizedGatewayKey, ApiError> {
@@ -1420,13 +1420,13 @@ fn upstream_disposition(status: StatusCode) -> UpstreamDisposition {
     }
 }
 
-fn generate_gateway_key() -> String {
+pub(crate) fn generate_gateway_key() -> String {
     let mut secret = [0_u8; 32];
     rand::thread_rng().fill_bytes(&mut secret);
     format!("hw_live_{}", URL_SAFE_NO_PAD.encode(secret))
 }
 
-fn hash_gateway_key(key: &str) -> Vec<u8> {
+pub(crate) fn hash_gateway_key(key: &str) -> Vec<u8> {
     Sha256::digest(key.as_bytes()).to_vec()
 }
 

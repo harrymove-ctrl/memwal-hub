@@ -94,7 +94,7 @@ export default function AgentsRequestsDialog({
     username: z
       .string()
       .trim()
-      .min(3, "Enter a Hub William username.")
+      .min(3, "Enter a Bew Harness username.")
       .max(32, "Username must be at most 32 characters.")
       .regex(
         /^[a-zA-Z0-9_-]+$/,
@@ -188,7 +188,7 @@ export default function AgentsRequestsDialog({
       "popup,width=720,height=820",
     );
     if (!popup) {
-      setRefreshError("Allow popups for Hub William, then try again.");
+      setRefreshError("Allow popups for Bew Harness, then try again.");
       return;
     }
     popup.opener = null;
@@ -258,7 +258,7 @@ export default function AgentsRequestsDialog({
 
           <DialogTitle>Manage pool access</DialogTitle>
           <DialogDescription>
-            Review requests, invite Hub William users, and manage members for{" "}
+            Review requests, invite Bew Harness users, and manage members for{" "}
             {pool?.accountLabel}.
           </DialogDescription>
         </DialogHeader>
@@ -386,7 +386,7 @@ export default function AgentsRequestsDialog({
               Join requests
             </h3>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Search pending requests by Hub William or Telegram username.
+              Search pending requests by Bew Harness or Telegram username.
             </p>
           </div>
           <div className="relative">
@@ -487,7 +487,7 @@ export default function AgentsRequestsDialog({
                   aria-invalid={Boolean(form.formState.errors.username)}
                   autoComplete="off"
                   id="invite-username"
-                  placeholder="Hub William username"
+                  placeholder="Bew Harness username"
                   {...form.register("username")}
                 />
               </div>

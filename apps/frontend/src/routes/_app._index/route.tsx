@@ -75,12 +75,12 @@ export default function WhitepaperRoute() {
           id="whitepaper-title"
           className="font-bold tracking-tight text-balance text-3xl/tight sm:text-4xl"
         >
-          Hub-William: the boundary an agent must not cross, written down
+          Bew-Harness: the boundary an agent must not cross, written down
         </h1>
 
         <p className="max-w-3xl text-muted-foreground text-base/relaxed">
           An agent given a whole codebase and a shell has no boundary it must
-          not cross, and nothing that fires when it tries. Hub-William writes
+          not cross, and nothing that fires when it tries. Bew-Harness writes
           that boundary down in four kinds of document —{" "}
           <strong className="font-semibold text-foreground">Harnesses</strong>,{" "}
           <strong className="font-semibold text-foreground">Skills</strong>,{" "}

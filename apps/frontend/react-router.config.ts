@@ -67,7 +67,7 @@ export default {
     "/library",
     "/tools",
     "/agents",
-    "/activities",
+    "/skills",
     ...contributors().map((name) => `/library/${name}`),
     ...contributorsWith("tools").map((name) => `/tools/${name}`),
   ],
