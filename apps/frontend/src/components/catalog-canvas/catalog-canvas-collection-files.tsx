@@ -1,7 +1,7 @@
 import { Download, FileText } from "lucide-react";
 
 import Flex from "@/components/ui/flex";
-import { type CatalogCollectionFile } from "@/services/catalog";
+import { type CatalogCollectionFile } from "@/services/catalog-library";
 import { downloadText } from "@/utils/utils.download";
 
 interface CatalogCanvasCollectionFilesProps {

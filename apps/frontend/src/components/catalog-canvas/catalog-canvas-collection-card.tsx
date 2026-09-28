@@ -13,7 +13,7 @@ import {
 import Center from "@/components/ui/center";
 import Flex from "@/components/ui/flex";
 import BlueprintReveal from "@/components/ui/blueprint-reveal";
-import catalogService, { type CatalogCollection } from "@/services/catalog";
+import catalogService, { type CatalogCollection } from "@/services/catalog-library";
 
 const collectionIcons: Record<string, LucideIcon> = {
   documents: BookOpen,

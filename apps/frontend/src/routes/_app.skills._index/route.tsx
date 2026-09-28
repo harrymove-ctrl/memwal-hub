@@ -7,8 +7,8 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
 import Flex from "@/components/ui/flex";
 import BlueprintReveal from "@/components/ui/blueprint-reveal";
 import { copyText } from "@/utils/utils.clipboard";
-import catalogService from "@/services/catalog";
-import type { CatalogEntry } from "@/services/catalog";
+import catalogService from "@/services/catalog-library";
+import type { CatalogEntry } from "@/services/catalog-library";
 type Domain = "frontend" | "backend";
 
 const DOMAIN_LABEL: Record<Domain, string> = {

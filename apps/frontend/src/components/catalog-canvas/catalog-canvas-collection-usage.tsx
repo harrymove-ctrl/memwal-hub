@@ -1,6 +1,6 @@
 import CopyCommand from "@/components/copy-command";
 import Flex from "@/components/ui/flex";
-import catalogService, { type CatalogCollection } from "@/services/catalog";
+import catalogService, { type CatalogCollection } from "@/services/catalog-library";
 
 const token =
   "rounded-lg border border-border/70 bg-card px-2 py-1 font-mono text-[11px] text-foreground";

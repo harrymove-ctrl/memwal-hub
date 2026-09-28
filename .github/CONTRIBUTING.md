@@ -1,53 +1,62 @@
 # Contributing to Hub William
 
-Thanks for helping make agent workflows easier to read, review, and reuse.
-Contributions can add or improve catalogue documents, the web app, or the
-machine installer.
+Hub William accepts community pull requests for **tool documentation only**.
+The Tools catalogue groups documentation by contributor and tool. It does not
+have a separate category taxonomy.
 
-## Branching
+## Community pull requests
 
-Contributions land on `dev`. Production is `main`, and it moves only by merging
-`dev` into `main`.
+1. Fork the repository and branch from `dev`.
+2. Add or update Markdown files only in
+   `contributors/<your-github-login>/tools/<tool-name>/`. Use your GitHub login
+   in lowercase, a lowercase hyphenated tool name, and a clear entry document
+   such as `README.md` or `<tool-name>.md`.
+3. Open a pull request into `dev` using the pull request template. Explain what
+   the tool does, how to use it, and how you verified the instructions.
 
-- Branch from `dev` and open the pull request into `dev`.
-- A maintainer promotes a verified `dev` to production with a pull request
-  into `main`. Do not open a feature pull request against `main`.
+You may include nested Markdown documents in your tool folder. Use ordinary
+files, not symbolic links or executable files. Keep instructions specific and
+readable; cite official documentation for claims that can change. Do not add
+credentials, tokens, private endpoints, customer data, copied material without
+permission, promotional links, or unrelated changes. The source documents and
+per-tool ZIP are published as part of the Tools catalogue, so review the exact
+files you submit.
 
-`dev` deploys to the preview site; `main` deploys to production. See
-[architecture.md](../apps/frontend/docs/architecture.md).
+The automated community policy checks the pull request's author, target branch,
+changed paths, file types, and file modes. A community pull request that changes
+`contributors/default/`, another contributor's folder, code, tests, APIs,
+frontend files, workflows, infrastructure, conventions, or any other path will
+fail and may be closed. Splitting an out-of-scope code change across tool docs
+does not make it in scope. Maintainers review content and links before merging;
+passing automation is not acceptance.
 
-## Add a catalogue document
+`contributors/*/libraries/` contains internal repository workflow sources, not
+public tool contributions. New tools appear automatically in the Tools
+contributor selector and at `/tools/<github-login>` after an accepted change is
+deployed. There is no category field to set.
 
-Start with the [catalogue contribution guide](../README.md#how-to-contribute).
-In short:
+## Propose a change outside tool documentation
 
-1. Fork the repository and create a branch from `dev`.
-2. Add the Markdown file under `contributors/<your-github-login>/` when it is
-   specific to your own workspace, accounts, or infrastructure. Change a file
-   under `contributors/default/` only when the rule should be shared by every
-   user.
-3. Keep the existing folder shape. The path determines where the document
-   appears on the library or tools canvas.
-4. Open a pull request into `dev` and explain why the document belongs in its
-   chosen shared or contributor-owned location.
+Open a [change proposal](https://github.com/synasapmob/hub-william/issues/new/choose)
+for API, frontend, installer, model, deployment, workflow, convention, or
+repository structure changes. Include the problem, expected behavior, and
+relevant context. A maintainer will decide whether and how to implement it.
+Use the bug report form for reproducible defects. Do not open a public issue
+for a suspected vulnerability; follow [SECURITY.md](SECURITY.md) instead.
 
-Do not include credentials, tokens, private endpoints, customer data, or other
-secrets in a catalogue document. Everything in `contributors/` is published.
+## Repository owner changes
 
-## Change the app or installer
+The repository owner branches from `dev` and opens pull requests into `dev`.
+The owner promotes a verified `dev` into `main`; feature pull requests do not
+target `main`. The `main` branch is the Railway production source. Owner changes
+to the application, installers, tests, or workflow sources follow the
+[architecture](../apps/frontend/docs/architecture.md), accepted
+[decisions](../docs/decisions/README.md), and, for user-visible frontend work,
+[frontend conventions](../apps/frontend/docs/frontend-conventions.md).
 
-Install dependencies and start the app:
-
-```sh
-pnpm install
-pnpm dev
-```
-
-Read [the frontend conventions](../apps/frontend/docs/frontend-conventions.md) before a
-user-visible change. The [architecture guide](../apps/frontend/docs/architecture.md) explains
-the static catalogue and the boundaries between the site and installer.
-
-Before opening a pull request, run the same checks as CI:
+Run the checks relevant to the change before opening a pull request. Full CI
+runs for repository-owner pull requests; community PRs run the trusted scope
+check without executing their changed files. Full CI runs:
 
 ```sh
 pnpm format:check
@@ -56,14 +65,10 @@ pnpm check:tailwind
 pnpm typecheck
 pnpm test
 pnpm build
-bash apps/frontend/scripts/machine/tests/run.sh
+node --test .github/scripts/contribution-policy.test.mjs
+python3 -m unittest discover -s tests -p 'test_*.py' # in apps/frontend/scripts/installers
 ```
 
-Keep a pull request focused on one outcome, add regression coverage for changed
-behavior, and call out verification gaps honestly. A maintainer may ask for a
-change before merging even when CI is green.
-
-## Report a security issue
-
-Do not open a public issue for a suspected vulnerability. Follow the private
-reporting instructions in the [security policy](SECURITY.md).
+Preserve regression coverage for supported behavior and state any verification
+gaps. The installer suite uses temporary directories rather than real agent
+configuration.

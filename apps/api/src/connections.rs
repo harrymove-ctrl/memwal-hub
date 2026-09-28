@@ -17,13 +17,16 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use sqlx::FromRow;
+use sqlx::{FromRow, Postgres, Transaction};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::{AppState, auth::authenticated_user_id, error::ApiError};
 
 const CODEX_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
+const CODEX_REDIRECT_URI: &str = "http://localhost:1455/auth/callback";
+const CODEX_SCOPES: &str =
+    "openid profile email offline_access api.connectors.read api.connectors.invoke";
 const CLAUDE_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const CLAUDE_SCOPES: &str = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
 pub(crate) const ANTIGRAVITY_CLIENT_VERSION: &str = "antigravity/cli/1.2.3 (aidev_client; os_type=linux; arch=amd64; cl=981443618; auth_method=consumer)";
@@ -33,6 +36,13 @@ const GROK_CLIENT_SURFACE: &str = "grok-build";
 const DEFAULT_DEVICE_EXPIRY_SECONDS: i64 = 900;
 const DEFAULT_POLL_SECONDS: u64 = 5;
 const PROVIDER_CREDENTIAL_REFRESH_AFTER_MINUTES: i64 = 60;
+const EXPIRED_PROVIDER_AUTHORIZATION_MESSAGE: &str =
+    "Provider authorization expired. Refresh this pool to reconnect.";
+const ACCOUNT_VERIFICATION_REQUIRED_MESSAGE: &str =
+    "Provider account verification is required. Reconnect this pool.";
+
+#[cfg(all(test, feature = "database-tests"))]
+mod database_tests;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -138,6 +148,7 @@ pub struct AgentAuthorizationPrompt {
 pub struct AgentConnection {
     pub account_label: Option<String>,
     pub authorization: Option<AgentAuthorizationPrompt>,
+    pub availability_status: String,
     pub created_at: DateTime<Utc>,
     pub failure_message: Option<String>,
     pub id: Uuid,
@@ -149,6 +160,7 @@ pub struct AgentConnection {
 
 #[derive(Debug, FromRow)]
 struct ConnectionRow {
+    availability_status: String,
     account_label: Option<String>,
     created_at: DateTime<Utc>,
     failure_message: Option<String>,
@@ -189,8 +201,10 @@ struct ConnectionMetadataCredentialRow {
 #[serde(tag = "provider", rename_all = "snake_case")]
 enum AuthorizationSecret {
     Chatgpt {
-        device_auth_id: String,
-        user_code: String,
+        authorization_url: String,
+        code_verifier: String,
+        redirect_uri: String,
+        state: String,
     },
     Claude {
         authorization_url: String,
@@ -233,11 +247,12 @@ enum CredentialRefreshMode {
     Force,
     NearExpiry,
     Stale,
+    Nightly(DateTime<Utc>),
 }
 
 impl CredentialRefreshMode {
     fn records_scheduled_attempt(self) -> bool {
-        matches!(self, Self::Stale)
+        matches!(self, Self::Stale | Self::Nightly(_))
     }
 
     fn restores_availability(self) -> bool {
@@ -252,27 +267,24 @@ pub struct ProviderCredentialRefreshSummary {
     pub refreshed: u64,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderCredentialRefreshStatus {
+    Refreshed,
+    ReauthorizationRequired,
+    Failed,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProviderCredentialRefreshResult {
+    pub connection_id: Uuid,
+    pub provider: String,
+    pub status: ProviderCredentialRefreshStatus,
+}
+
 enum ProviderRefreshError {
     ReauthorizationRequired,
     Api(ApiError),
-}
-
-#[derive(Debug, Deserialize)]
-struct CodexDeviceResponse {
-    device_auth_id: String,
-    user_code: String,
-    #[serde(default)]
-    expires_in: Option<i64>,
-    #[serde(default)]
-    expires_at: Option<DateTime<Utc>>,
-    #[serde(default)]
-    interval: Option<Value>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CodexPollResponse {
-    authorization_code: String,
-    code_verifier: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -318,7 +330,7 @@ pub async fn start(
         "INSERT INTO agent_connections
             (id, user_id, provider, status, account_label, plan, failure_message)
          VALUES ($1, $2, $3, 'pending', NULL, NULL, NULL)
-         RETURNING id, provider, status, account_label, plan, failure_message, created_at, updated_at",
+         RETURNING id, provider, status, availability_status, account_label, plan, failure_message, created_at, updated_at",
     )
     .bind(connection_id)
     .bind(user_id)
@@ -401,7 +413,7 @@ pub async fn connect_deepseek(
         "INSERT INTO agent_connections
             (id, user_id, provider, status, account_label, plan, failure_message)
          VALUES ($1, $2, 'deepseek', 'pending', NULL, NULL, NULL)
-         RETURNING id, provider, status, account_label, plan, failure_message, created_at, updated_at",
+         RETURNING id, provider, status, availability_status, account_label, plan, failure_message, created_at, updated_at",
     )
     .bind(Uuid::new_v4())
     .bind(user_id)
@@ -455,7 +467,7 @@ async fn start_connection_reauthorization(
              failure_message = NULL,
              updated_at = NOW()
          WHERE id = $1
-         RETURNING id, provider, status, account_label, plan, failure_message, created_at, updated_at",
+         RETURNING id, provider, status, availability_status, account_label, plan, failure_message, created_at, updated_at",
     )
     .bind(row.id)
     .fetch_one(&mut *transaction)
@@ -481,7 +493,7 @@ pub async fn list_connections(
 ) -> Result<Json<Vec<AgentConnection>>, ApiError> {
     let user_id = authenticated_user_id(&state, &jar).await?;
     let rows = sqlx::query_as::<_, ConnectionRow>(
-        "SELECT id, provider, status, account_label, plan, failure_message, created_at, updated_at
+        "SELECT id, provider, status, availability_status, account_label, plan, failure_message, created_at, updated_at
          FROM agent_connections WHERE user_id = $1 ORDER BY created_at ASC",
     )
     .bind(user_id)
@@ -527,12 +539,7 @@ pub async fn get_connection(
             {
                 RefreshConnectionOutcome::Connected { connection, .. } => connection,
                 RefreshConnectionOutcome::ReauthorizationRequired(row) => {
-                    fail_connection(
-                        &state,
-                        row,
-                        "Provider authorization expired. Refresh this pool to reconnect.",
-                    )
-                    .await?
+                    connection_from_row(row, None)?
                 }
             };
         return Ok(Json(connection));
@@ -604,6 +611,12 @@ pub async fn complete_authorization(
         &authorization.secret_nonce,
     )?;
     let (code_verifier, redirect_uri, expected_state, provider) = match secret {
+        AuthorizationSecret::Chatgpt {
+            code_verifier,
+            redirect_uri,
+            state,
+            ..
+        } => (code_verifier, redirect_uri, state, AgentProvider::Chatgpt),
         AuthorizationSecret::Claude {
             code_verifier,
             redirect_uri,
@@ -633,6 +646,9 @@ pub async fn complete_authorization(
     }
 
     let token = match provider {
+        AgentProvider::Chatgpt => {
+            exchange_codex_code(&state, &code, &code_verifier, &redirect_uri).await?
+        }
         AgentProvider::Claude => {
             exchange_claude_code(
                 &state,
@@ -656,7 +672,7 @@ pub async fn complete_authorization(
     path = "/agent-connections/{connection_id}",
     params(("connection_id" = Uuid, Path, description = "Agent connection ID")),
     responses(
-        (status = 204, description = "Connection credential removed"),
+        (status = 204, description = "Connected account pool deleted"),
         (status = 404, description = "Connection not found", body = crate::ErrorResponse)
     ),
     tag = "agent connections"
@@ -668,26 +684,12 @@ pub async fn disconnect(
 ) -> Result<StatusCode, ApiError> {
     let user_id = authenticated_user_id(&state, &jar).await?;
     owned_connection(&state, user_id, connection_id).await?;
-    let mut transaction = state.pool.begin().await.map_err(database_error)?;
-    sqlx::query("DELETE FROM agent_connection_authorizations WHERE connection_id = $1")
+    sqlx::query("DELETE FROM agent_connections WHERE id = $1 AND user_id = $2")
         .bind(connection_id)
-        .execute(&mut *transaction)
+        .bind(user_id)
+        .execute(&state.pool)
         .await
         .map_err(database_error)?;
-    sqlx::query("DELETE FROM agent_connection_credentials WHERE connection_id = $1")
-        .bind(connection_id)
-        .execute(&mut *transaction)
-        .await
-        .map_err(database_error)?;
-    sqlx::query(
-        "UPDATE agent_connections SET status = 'disconnected', account_label = NULL,
-         plan = NULL, failure_message = NULL, updated_at = NOW() WHERE id = $1",
-    )
-    .bind(connection_id)
-    .execute(&mut *transaction)
-    .await
-    .map_err(database_error)?;
-    transaction.commit().await.map_err(database_error)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -697,7 +699,7 @@ async fn start_provider_authorization(
     provider: AgentProvider,
 ) -> Result<StartedAuthorization, ApiError> {
     match provider {
-        AgentProvider::Chatgpt => start_codex_authorization(state).await,
+        AgentProvider::Chatgpt => start_codex_authorization(state),
         AgentProvider::Claude => start_claude_authorization(state),
         AgentProvider::Gemini => start_gemini_authorization(state),
         AgentProvider::Deepseek => Err(ApiError::Validation(
@@ -742,47 +744,36 @@ async fn validate_deepseek_key(state: &AppState, api_key: &str) -> Result<(), Ap
     Ok(())
 }
 
-async fn start_codex_authorization(state: &AppState) -> Result<StartedAuthorization, ApiError> {
-    let url = format!(
-        "{}/api/accounts/deviceauth/usercode",
-        state.config.codex_issuer
-    );
-    let response = state
-        .http
-        .post(url)
-        .header("originator", "codex_cli_rs")
-        .header("user-agent", "codex_cli_rs/0.153.4")
-        .json(&serde_json::json!({ "client_id": CODEX_CLIENT_ID }))
-        .send()
-        .await
-        .map_err(|error| upstream_network_error(AgentProvider::Chatgpt, error))?;
-    let status = response.status();
-    if !status.is_success() {
-        eprintln!("ChatGPT device authorization returned HTTP {status}");
-        return Err(upstream_status_error(AgentProvider::Chatgpt, status));
-    }
-    let payload = response
-        .json::<CodexDeviceResponse>()
-        .await
-        .map_err(|_| upstream_payload_error(AgentProvider::Chatgpt))?;
-    let expires_at = payload.expires_at.unwrap_or_else(|| {
-        Utc::now() + Duration::seconds(payload.expires_in.unwrap_or(DEFAULT_DEVICE_EXPIRY_SECONDS))
-    });
-    let prompt_url = format!(
-        "{}/codex/device?user_code={}",
-        state.config.codex_issuer,
-        url_encode(&payload.user_code)
-    );
+fn start_codex_authorization(state: &AppState) -> Result<StartedAuthorization, ApiError> {
+    let code_verifier = random_url_token(32);
+    let state_token = random_url_token(32);
+    let code_challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(code_verifier.as_bytes()));
+    let mut url = Url::parse(&format!("{}/oauth/authorize", state.config.codex_issuer))
+        .map_err(|_| ApiError::Internal)?;
+    url.query_pairs_mut()
+        .append_pair("response_type", "code")
+        .append_pair("client_id", CODEX_CLIENT_ID)
+        .append_pair("redirect_uri", CODEX_REDIRECT_URI)
+        .append_pair("scope", CODEX_SCOPES)
+        .append_pair("code_challenge", &code_challenge)
+        .append_pair("code_challenge_method", "S256")
+        .append_pair("state", &state_token)
+        .append_pair("id_token_add_organizations", "true")
+        .append_pair("codex_cli_simplified_flow", "true")
+        .append_pair("originator", "codex_cli_rs");
+    let authorization_url = url.to_string();
 
     Ok(StartedAuthorization {
-        expires_at,
-        poll_after_seconds: poll_seconds(payload.interval.as_ref()),
-        prompt_url,
-        requires_callback_url: false,
-        user_code: Some(payload.user_code.clone()),
+        expires_at: Utc::now() + Duration::minutes(15),
+        poll_after_seconds: DEFAULT_POLL_SECONDS,
+        prompt_url: authorization_url.clone(),
+        requires_callback_url: true,
+        user_code: None,
         secret: AuthorizationSecret::Chatgpt {
-            device_auth_id: payload.device_auth_id,
-            user_code: payload.user_code,
+            authorization_url,
+            code_verifier,
+            redirect_uri: CODEX_REDIRECT_URI.to_owned(),
+            state: state_token,
         },
     })
 }
@@ -915,53 +906,20 @@ async fn poll_pending_connection(
 
     match secret {
         AuthorizationSecret::Chatgpt {
-            device_auth_id,
-            user_code,
-        } => {
-            let response = state
-                .http
-                .post(format!(
-                    "{}/api/accounts/deviceauth/token",
-                    state.config.codex_issuer
-                ))
-                .header("originator", "codex_cli_rs")
-                .header("user-agent", "codex_cli_rs/0.153.4")
-                .json(&serde_json::json!({
-                    "device_auth_id": device_auth_id,
-                    "user_code": user_code,
-                }))
-                .send()
-                .await
-                .map_err(|error| upstream_network_error(AgentProvider::Chatgpt, error))?;
-            if response.status().is_success() {
-                let approval = response
-                    .json::<CodexPollResponse>()
-                    .await
-                    .map_err(|_| upstream_payload_error(AgentProvider::Chatgpt))?;
-                let token = exchange_codex_code(state, approval).await?;
-                return finish_connection(state, row, token).await;
-            }
-            if response.status().is_client_error() {
-                return connection_from_row(
-                    row,
-                    Some(AgentAuthorizationPrompt {
-                        authorization_url: format!(
-                            "{}/codex/device?user_code={}",
-                            state.config.codex_issuer,
-                            url_encode(&user_code)
-                        ),
-                        expires_at: authorization.expires_at,
-                        poll_after_seconds: DEFAULT_POLL_SECONDS,
-                        requires_callback_url: false,
-                        user_code: Some(user_code),
-                    }),
-                );
-            }
-            Err(upstream_status_error(
-                AgentProvider::Chatgpt,
-                response.status(),
-            ))
-        }
+            authorization_url,
+            code_verifier: _,
+            redirect_uri: _,
+            state: _,
+        } => connection_from_row(
+            row,
+            Some(AgentAuthorizationPrompt {
+                authorization_url,
+                expires_at: authorization.expires_at,
+                poll_after_seconds: DEFAULT_POLL_SECONDS,
+                requires_callback_url: true,
+                user_code: None,
+            }),
+        ),
         AuthorizationSecret::Grok {
             device_code,
             user_code,
@@ -1037,21 +995,23 @@ async fn poll_pending_connection(
 
 async fn exchange_codex_code(
     state: &AppState,
-    approval: CodexPollResponse,
+    code: &str,
+    code_verifier: &str,
+    redirect_uri: &str,
 ) -> Result<Value, ApiError> {
     let response = state
         .http
         .post(format!("{}/oauth/token", state.config.codex_issuer))
-        .header("user-agent", "codex_cli_rs/0.153.4")
+        .header(
+            "user-agent",
+            format!("codex_cli_rs/{}", state.config.codex_client_version),
+        )
         .form(&[
             ("grant_type", "authorization_code"),
             ("client_id", CODEX_CLIENT_ID),
-            ("code", approval.authorization_code.as_str()),
-            ("code_verifier", approval.code_verifier.as_str()),
-            (
-                "redirect_uri",
-                "https://auth.openai.com/deviceauth/callback",
-            ),
+            ("code", code),
+            ("code_verifier", code_verifier),
+            ("redirect_uri", redirect_uri),
         ])
         .send()
         .await
@@ -1219,10 +1179,29 @@ async fn parse_token_response(
 async fn finish_connection(
     state: &AppState,
     row: ConnectionRow,
-    token: Value,
+    mut token: Value,
 ) -> Result<AgentConnection, ApiError> {
     let provider = AgentProvider::from_str(&row.provider)?;
-    let (account_label, plan) = resolved_connection_metadata(state, provider, &token).await;
+    let profile = if provider == AgentProvider::Claude {
+        fetch_claude_profile(state, &token).await
+    } else {
+        None
+    };
+    let (account_label, plan) = connection_metadata(provider, &token, profile.as_ref());
+    let account_identity = provider_account_identity(provider, &token, profile.as_ref());
+    let Some(account_identity) = account_identity else {
+        return Err(ApiError::Validation(
+            "The provider did not return a stable account identity.",
+        ));
+    };
+    ensure_reauthorization_matches(state, &row, provider, Some(account_identity.as_str())).await?;
+    if let Some(token) = token.as_object_mut() {
+        token.insert(
+            "hub_account_identity".to_owned(),
+            Value::String(account_identity.clone()),
+        );
+    }
+    let pending_owner_id = connection_owner_id(state, row.id).await?;
     let (credential_ciphertext, credential_nonce) =
         encrypt_json(&state.config.credential_encryption_key, &token)?;
     let access_token_expires_at = token
@@ -1234,6 +1213,25 @@ async fn finish_connection(
         .and_then(Value::as_i64)
         .map(|seconds| Utc::now() + Duration::seconds(seconds));
     let mut transaction = state.pool.begin().await.map_err(database_error)?;
+    let identity_lock = i64::from_be_bytes(
+        Sha256::digest(account_identity.as_bytes())[..8]
+            .try_into()
+            .map_err(|_| ApiError::Internal)?,
+    );
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(identity_lock)
+        .execute(&mut *transaction)
+        .await
+        .map_err(database_error)?;
+    let duplicate_id = find_duplicate_connection(
+        state,
+        &mut transaction,
+        provider,
+        row.id,
+        account_identity.as_str(),
+    )
+    .await?;
+    let target_id = duplicate_id.unwrap_or(row.id);
 
     sqlx::query(
         "INSERT INTO agent_connection_credentials
@@ -1247,7 +1245,7 @@ async fn finish_connection(
             refresh_token_expires_at = EXCLUDED.refresh_token_expires_at,
             updated_at = NOW()",
     )
-    .bind(row.id)
+    .bind(target_id)
     .bind(credential_ciphertext)
     .bind(credential_nonce)
     .bind(access_token_expires_at)
@@ -1260,21 +1258,200 @@ async fn finish_connection(
         .execute(&mut *transaction)
         .await
         .map_err(database_error)?;
+    if target_id != row.id {
+        sqlx::query(
+            "DELETE FROM agent_pool_join_requests
+             WHERE connection_id = $1 AND requester_user_id = $2",
+        )
+        .bind(target_id)
+        .bind(pending_owner_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(database_error)?;
+    }
     let updated = sqlx::query_as::<_, ConnectionRow>(
         "UPDATE agent_connections SET status = 'connected', account_label = $2, plan = $3,
-         failure_message = NULL, availability_status = 'active', rate_limited_until = NULL,
-         retry_claimed_at = NULL, updated_at = NOW() WHERE id = $1
-         RETURNING id, provider, status, account_label, plan, failure_message, created_at, updated_at",
+          failure_message = NULL, availability_status = 'active', rate_limited_until = NULL,
+          retry_claimed_at = NULL, user_id = $4, updated_at = NOW() WHERE id = $1
+          RETURNING id, provider, status, availability_status, account_label, plan, failure_message, created_at, updated_at",
     )
-    .bind(row.id)
+    .bind(target_id)
     .bind(account_label)
     .bind(plan)
+    .bind(pending_owner_id)
     .fetch_one(&mut *transaction)
     .await
     .map_err(database_error)?;
+    if target_id != row.id {
+        sqlx::query("DELETE FROM agent_connections WHERE id = $1")
+            .bind(row.id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(database_error)?;
+    }
     transaction.commit().await.map_err(database_error)?;
 
     connection_from_row(updated, None)
+}
+
+async fn connection_owner_id(state: &AppState, connection_id: Uuid) -> Result<Uuid, ApiError> {
+    sqlx::query_scalar::<_, Uuid>("SELECT user_id FROM agent_connections WHERE id = $1")
+        .bind(connection_id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(database_error)
+}
+
+async fn find_duplicate_connection(
+    state: &AppState,
+    transaction: &mut Transaction<'_, Postgres>,
+    provider: AgentProvider,
+    excluded_id: Uuid,
+    identity: &str,
+) -> Result<Option<Uuid>, ApiError> {
+    let rows = sqlx::query_as::<_, (Uuid, Vec<u8>, Vec<u8>)>(
+        "SELECT connections.id, credentials.credential_ciphertext,
+                credentials.credential_nonce
+         FROM agent_connections AS connections
+         JOIN agent_connection_credentials AS credentials
+           ON credentials.connection_id = connections.id
+         WHERE connections.provider = $1
+           AND connections.status = 'connected'
+           AND connections.id <> $2",
+    )
+    .bind(provider.to_string())
+    .bind(excluded_id)
+    .fetch_all(&mut **transaction)
+    .await
+    .map_err(database_error)?;
+    for (connection_id, ciphertext, nonce) in rows {
+        let token: Value =
+            decrypt_json(&state.config.credential_encryption_key, &ciphertext, &nonce)?;
+        if provider_account_identity(provider, &token, None).as_deref() == Some(identity) {
+            return Ok(Some(connection_id));
+        }
+    }
+    Ok(None)
+}
+
+async fn ensure_reauthorization_matches(
+    state: &AppState,
+    row: &ConnectionRow,
+    provider: AgentProvider,
+    new_identity: Option<&str>,
+) -> Result<(), ApiError> {
+    let credential = sqlx::query_as::<_, (Vec<u8>, Vec<u8>)>(
+        "SELECT credential_ciphertext, credential_nonce
+         FROM agent_connection_credentials WHERE connection_id = $1",
+    )
+    .bind(row.id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(database_error)?;
+    let Some((ciphertext, nonce)) = credential else {
+        return Ok(());
+    };
+    let stored_token: Value =
+        decrypt_json(&state.config.credential_encryption_key, &ciphertext, &nonce)?;
+    let stored_identity = provider_account_identity(provider, &stored_token, None);
+
+    if !reauthorization_identity_matches(stored_identity.as_deref(), new_identity) {
+        return Err(ApiError::Validation(
+            "Reconnect with the same provider account that owns this pool.",
+        ));
+    }
+    Ok(())
+}
+
+fn reauthorization_identity_matches(stored: Option<&str>, new: Option<&str>) -> bool {
+    matches!((stored, new), (Some(stored), Some(new)) if stored == new)
+}
+
+fn provider_account_identity(
+    provider: AgentProvider,
+    token: &Value,
+    provider_profile: Option<&Value>,
+) -> Option<String> {
+    // ChatGPT account IDs identify a workspace/subscription context, which can
+    // be shared by distinct logins. Recompute personal identity before reading
+    // legacy cached `id:<workspace>` values so reconnect cannot merge users.
+    if provider == AgentProvider::Chatgpt {
+        let claims = token_claims(token);
+        if let Some(subject) = claims
+            .as_ref()
+            .and_then(|claims| claims.get("sub"))
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+        {
+            return Some(format!("chatgpt:sub:{subject}"));
+        }
+        return token
+            .pointer("/account/email_address")
+            .or_else(|| token.pointer("/account/email"))
+            .or_else(|| token.get("email"))
+            .and_then(Value::as_str)
+            .or_else(|| claims.as_ref()?.get("email")?.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|email| format!("chatgpt:email:{}", email.to_ascii_lowercase()));
+    }
+    if let Some(identity) = token
+        .get("hub_account_identity")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(identity.to_owned());
+    }
+    let claims = token_claims(token);
+    let provider_id = token
+        .pointer("/account/id")
+        .and_then(Value::as_str)
+        .or_else(|| token.pointer("/account/uuid").and_then(Value::as_str))
+        .or_else(|| {
+            let profile = provider_profile?;
+            profile
+                .pointer("/account/id")
+                .or_else(|| profile.pointer("/account/uuid"))
+                .or_else(|| profile.pointer("/user/id"))
+                .and_then(Value::as_str)
+        })
+        .or_else(|| {
+            claims
+                .as_ref()
+                .and_then(|value| value.get("sub"))
+                .and_then(Value::as_str)
+        })
+        .filter(|value| !value.is_empty());
+    if let Some(provider_id) = provider_id {
+        return Some(format!("id:{provider_id}"));
+    }
+
+    if provider == AgentProvider::Deepseek {
+        let access_token = token.get("access_token").and_then(Value::as_str)?;
+        let digest = Sha256::digest(access_token.as_bytes());
+        return Some(format!("key:{digest:x}"));
+    }
+
+    token
+        .pointer("/account/email_address")
+        .or_else(|| token.pointer("/account/email"))
+        .or_else(|| token.get("email"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            let profile = provider_profile?;
+            profile
+                .pointer("/account/email_address")
+                .or_else(|| profile.pointer("/account/email"))
+                .or_else(|| profile.pointer("/user/email"))
+                .and_then(Value::as_str)
+        })
+        .or_else(|| {
+            claims
+                .as_ref()
+                .and_then(|value| value.get("email"))
+                .and_then(Value::as_str)
+        })
+        .map(|email| format!("email:{}", email.trim().to_ascii_lowercase()))
 }
 
 fn connection_metadata(
@@ -1287,7 +1464,7 @@ fn connection_metadata(
         .get("api_key_last_four")
         .and_then(Value::as_str)
         .filter(|value| value.len() == 4 && value.is_ascii())
-        .map(|value| format!("API key ••••{value}"))
+        .map(|value| format!("••••{value}"))
         .or_else(|| {
             token
                 .pointer("/account/email_address")
@@ -1483,7 +1660,7 @@ pub async fn refresh_due_provider_credentials(
     state: &AppState,
 ) -> Result<ProviderCredentialRefreshSummary, sqlx::Error> {
     let rows = sqlx::query_as::<_, ConnectionRow>(
-        "SELECT connections.id, connections.provider, connections.status,
+        "SELECT connections.id, connections.provider, connections.status, connections.availability_status,
                 connections.account_label, connections.plan, connections.failure_message,
                 connections.created_at, connections.updated_at
          FROM agent_connections AS connections
@@ -1504,34 +1681,61 @@ pub async fn refresh_due_provider_credentials(
     .fetch_all(&state.pool)
     .await?;
 
+    refresh_scheduled_provider_credentials(state, rows, CredentialRefreshMode::Stale).await
+}
+
+/// Once per Vietnam calendar day, rotate connected OAuth credentials that have
+/// not already refreshed today and validate static DeepSeek keys. The row-lock
+/// recheck keeps this idempotent across API replicas and restarts.
+pub async fn refresh_nightly_provider_credentials(
+    state: &AppState,
+    day_start_utc: DateTime<Utc>,
+) -> Result<ProviderCredentialRefreshSummary, sqlx::Error> {
+    let rows = sqlx::query_as::<_, ConnectionRow>(
+        "SELECT connections.id, connections.provider, connections.status, connections.availability_status,
+                connections.account_label, connections.plan, connections.failure_message,
+                connections.created_at, connections.updated_at
+         FROM agent_connections AS connections
+         JOIN agent_connection_credentials AS credentials
+           ON credentials.connection_id = connections.id
+         WHERE connections.status = 'connected'
+           AND connections.availability_status <> 'reauth_required'
+           AND GREATEST(
+                 credentials.updated_at,
+                 COALESCE(credentials.refresh_attempted_at, credentials.updated_at)
+               ) < $1
+         ORDER BY connections.provider, connections.created_at",
+    )
+    .bind(day_start_utc)
+    .fetch_all(&state.pool)
+    .await?;
+
+    refresh_scheduled_provider_credentials(
+        state,
+        rows,
+        CredentialRefreshMode::Nightly(day_start_utc),
+    )
+    .await
+}
+
+async fn refresh_scheduled_provider_credentials(
+    state: &AppState,
+    rows: Vec<ConnectionRow>,
+    mode: CredentialRefreshMode,
+) -> Result<ProviderCredentialRefreshSummary, sqlx::Error> {
     let mut summary = ProviderCredentialRefreshSummary::default();
     for row in rows {
         let connection_id = row.id;
         let provider = row.provider.clone();
-        match refresh_connected_connection(state, row, CredentialRefreshMode::Stale).await {
+        match refresh_connected_connection(state, row, mode).await {
             Ok(RefreshConnectionOutcome::Connected {
                 refreshed: true, ..
             }) => summary.refreshed += 1,
             Ok(RefreshConnectionOutcome::Connected {
                 refreshed: false, ..
             }) => {}
-            Ok(RefreshConnectionOutcome::ReauthorizationRequired(row)) => {
-                match fail_connection(
-                    state,
-                    row,
-                    "Provider authorization expired. Refresh this pool to reconnect.",
-                )
-                .await
-                {
-                    Ok(_) => summary.reauthorization_required += 1,
-                    Err(error) => {
-                        summary.failed += 1;
-                        record_scheduled_refresh_attempt(state, connection_id).await;
-                        eprintln!(
-                            "scheduled {provider} credential failure update failed for {connection_id}: {error:?}"
-                        );
-                    }
-                }
+            Ok(RefreshConnectionOutcome::ReauthorizationRequired(_)) => {
+                summary.reauthorization_required += 1;
             }
             Err(error) => {
                 summary.failed += 1;
@@ -1544,6 +1748,43 @@ pub async fn refresh_due_provider_credentials(
     }
 
     Ok(summary)
+}
+
+/// Explicit operator maintenance: refresh every connected pool using its stored
+/// credentials, including validating static DeepSeek keys. Does not start an
+/// interactive authorization flow or stop after one provider fails.
+pub async fn refresh_all_provider_credentials(
+    state: &AppState,
+) -> Result<Vec<ProviderCredentialRefreshResult>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, ConnectionRow>(
+        "SELECT id, provider, status, availability_status, account_label, plan, failure_message, created_at, updated_at
+         FROM agent_connections WHERE status = 'connected' ORDER BY provider, created_at",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+
+    let mut results = Vec::with_capacity(rows.len());
+    for row in rows {
+        let connection_id = row.id;
+        let provider = row.provider.clone();
+        let status =
+            match refresh_connected_connection(state, row, CredentialRefreshMode::Force).await {
+                Ok(RefreshConnectionOutcome::Connected { .. }) => {
+                    ProviderCredentialRefreshStatus::Refreshed
+                }
+                Ok(RefreshConnectionOutcome::ReauthorizationRequired(_)) => {
+                    ProviderCredentialRefreshStatus::ReauthorizationRequired
+                }
+                Err(_) => ProviderCredentialRefreshStatus::Failed,
+            };
+        record_scheduled_refresh_attempt(state, connection_id).await;
+        results.push(ProviderCredentialRefreshResult {
+            connection_id,
+            provider,
+            status,
+        });
+    }
+    Ok(results)
 }
 
 async fn record_scheduled_refresh_attempt(state: &AppState, connection_id: Uuid) {
@@ -1570,6 +1811,55 @@ fn normalize_plan_label(value: &str) -> String {
     }
 }
 
+async fn finish_refresh_reauthorization(
+    mut transaction: Transaction<'_, Postgres>,
+    row: ConnectionRow,
+) -> Result<RefreshConnectionOutcome, ApiError> {
+    // Keep the credential lock until the failure state is committed. A fresh
+    // login that writes this credential must then finish after this update.
+    // Do not delete a concurrent manual reauthorization prompt.
+    let updated = sqlx::query_as::<_, ConnectionRow>(
+        "UPDATE agent_connections
+         SET availability_status = 'reauth_required',
+             failure_message = $2, updated_at = NOW()
+         WHERE id = $1 AND status = 'connected'
+           AND availability_status <> 'reauth_required'
+         RETURNING id, provider, status, availability_status, account_label, plan, failure_message, created_at, updated_at",
+    )
+    .bind(row.id)
+    .bind(EXPIRED_PROVIDER_AUTHORIZATION_MESSAGE)
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(database_error)?;
+    let updated = match updated {
+        Some(updated) => updated,
+        None => sqlx::query_as::<_, ConnectionRow>(
+            "SELECT id, provider, status, availability_status, account_label, plan, failure_message,
+                    created_at, updated_at
+             FROM agent_connections WHERE id = $1",
+        )
+        .bind(row.id)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(database_error)?,
+    };
+    transaction.commit().await.map_err(database_error)?;
+    Ok(RefreshConnectionOutcome::ReauthorizationRequired(updated))
+}
+
+async fn finish_refresh_error(
+    transaction: Transaction<'_, Postgres>,
+    mode: CredentialRefreshMode,
+    error: ApiError,
+) -> Result<RefreshConnectionOutcome, ApiError> {
+    if mode.records_scheduled_attempt() {
+        transaction.commit().await.map_err(database_error)?;
+    } else {
+        transaction.rollback().await.map_err(database_error)?;
+    }
+    Err(error)
+}
+
 async fn refresh_connected_connection(
     state: &AppState,
     row: ConnectionRow,
@@ -1587,8 +1877,32 @@ async fn refresh_connected_connection(
     .await
     .map_err(database_error)?;
     let Some(credential) = credential else {
-        transaction.rollback().await.map_err(database_error)?;
-        return Ok(RefreshConnectionOutcome::ReauthorizationRequired(row));
+        let current = sqlx::query_as::<_, ConnectionRow>(
+            "SELECT id, provider, status, availability_status, account_label, plan, failure_message,
+                    created_at, updated_at
+             FROM agent_connections WHERE id = $1 FOR UPDATE",
+        )
+        .bind(row.id)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(database_error)?;
+        let credential_now_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM agent_connection_credentials WHERE connection_id = $1)",
+        )
+        .bind(row.id)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(database_error)?;
+        if credential_now_exists {
+            transaction.commit().await.map_err(database_error)?;
+            return connection_from_row(current, None).map(|connection| {
+                RefreshConnectionOutcome::Connected {
+                    connection,
+                    refreshed: false,
+                }
+            });
+        }
+        return finish_refresh_reauthorization(transaction, current).await;
     };
 
     let last_refresh_activity_at = credential
@@ -1625,12 +1939,7 @@ async fn refresh_connected_connection(
         .refresh_token_expires_at
         .is_some_and(|expires_at| expires_at <= Utc::now())
     {
-        if mode.records_scheduled_attempt() {
-            transaction.commit().await.map_err(database_error)?;
-        } else {
-            transaction.rollback().await.map_err(database_error)?;
-        }
-        return Ok(RefreshConnectionOutcome::ReauthorizationRequired(row));
+        return finish_refresh_reauthorization(transaction, row).await;
     }
 
     let stored_token: Value = match decrypt_json(
@@ -1640,19 +1949,21 @@ async fn refresh_connected_connection(
     ) {
         Ok(stored_token) => stored_token,
         Err(error) => {
-            if mode.records_scheduled_attempt() {
-                transaction.commit().await.map_err(database_error)?;
-            }
-            return Err(error);
+            return finish_refresh_error(transaction, mode, error).await;
         }
     };
     let provider = AgentProvider::from_str(&row.provider)?;
     if provider == AgentProvider::Deepseek {
         let Some(api_key) = stored_token.get("access_token").and_then(Value::as_str) else {
-            transaction.rollback().await.map_err(database_error)?;
-            return Ok(RefreshConnectionOutcome::ReauthorizationRequired(row));
+            return finish_refresh_reauthorization(transaction, row).await;
         };
-        validate_deepseek_key(state, api_key).await?;
+        match validate_deepseek_key(state, api_key).await {
+            Ok(()) => {}
+            Err(ApiError::Validation(_)) => {
+                return finish_refresh_reauthorization(transaction, row).await;
+            }
+            Err(error) => return finish_refresh_error(transaction, mode, error).await,
+        }
         if mode.restores_availability() {
             sqlx::query(
                 "UPDATE agent_connections SET availability_status = 'active',
@@ -1674,31 +1985,16 @@ async fn refresh_connected_connection(
         });
     }
     let Some(refresh_token) = stored_token.get("refresh_token").and_then(Value::as_str) else {
-        if mode.records_scheduled_attempt() {
-            transaction.commit().await.map_err(database_error)?;
-        } else {
-            transaction.rollback().await.map_err(database_error)?;
-        }
-        return Ok(RefreshConnectionOutcome::ReauthorizationRequired(row));
+        return finish_refresh_reauthorization(transaction, row).await;
     };
     let refreshed =
         match refresh_provider_token(state, provider, refresh_token, &stored_token).await {
             Ok(refreshed) => refreshed,
             Err(ProviderRefreshError::ReauthorizationRequired) => {
-                if mode.records_scheduled_attempt() {
-                    transaction.commit().await.map_err(database_error)?;
-                } else {
-                    transaction.rollback().await.map_err(database_error)?;
-                }
-                return Ok(RefreshConnectionOutcome::ReauthorizationRequired(row));
+                return finish_refresh_reauthorization(transaction, row).await;
             }
             Err(ProviderRefreshError::Api(error)) => {
-                if mode.records_scheduled_attempt() {
-                    transaction.commit().await.map_err(database_error)?;
-                } else {
-                    transaction.rollback().await.map_err(database_error)?;
-                }
-                return Err(error);
+                return finish_refresh_error(transaction, mode, error).await;
             }
         };
     let access_token_expires_at = refreshed
@@ -1712,44 +2008,102 @@ async fn refresh_connected_connection(
         .or(credential.refresh_token_expires_at);
     let merged = merge_token_response(stored_token, refreshed);
     let (credential_ciphertext, credential_nonce) =
-        encrypt_json(&state.config.credential_encryption_key, &merged)?;
+        match encrypt_json(&state.config.credential_encryption_key, &merged) {
+            Ok(encrypted) => encrypted,
+            Err(error) => return finish_refresh_error(transaction, mode, error).await,
+        };
     let (account_label, plan) = resolved_connection_metadata(state, provider, &merged).await;
+    let verification_probe = if provider == AgentProvider::Gemini && mode.restores_availability() {
+        match (
+            merged.get("access_token").and_then(Value::as_str),
+            merged
+                .get("cloudaicompanion_project")
+                .and_then(Value::as_str),
+        ) {
+            (Some(access_token), Some(project)) => {
+                crate::gateway::probe_gemini_account_verification(state, access_token, project)
+                    .await
+            }
+            _ => crate::gateway::GeminiVerificationProbe::Inconclusive,
+        }
+    } else {
+        crate::gateway::GeminiVerificationProbe::Verified
+    };
 
-    let restores_availability = mode.restores_availability();
-    sqlx::query(
-        "UPDATE agent_connection_credentials SET credential_ciphertext = $2,
+    let verification_required =
+        verification_probe == crate::gateway::GeminiVerificationProbe::ReauthorizationRequired;
+    let restores_availability = mode.restores_availability()
+        && verification_probe == crate::gateway::GeminiVerificationProbe::Verified;
+    if mode.records_scheduled_attempt() {
+        sqlx::query("SAVEPOINT scheduled_credential_persistence")
+            .execute(&mut *transaction)
+            .await
+            .map_err(database_error)?;
+    }
+    let persistence = async {
+        sqlx::query(
+            "UPDATE agent_connection_credentials SET credential_ciphertext = $2,
          credential_nonce = $3, access_token_expires_at = $4,
          refresh_token_expires_at = $5, refresh_attempted_at = NOW(), updated_at = NOW()
          WHERE connection_id = $1",
-    )
-    .bind(row.id)
-    .bind(credential_ciphertext)
-    .bind(credential_nonce)
-    .bind(access_token_expires_at)
-    .bind(refresh_token_expires_at)
-    .execute(&mut *transaction)
-    .await
-    .map_err(database_error)?;
-    sqlx::query(
-        "UPDATE agent_connections SET
+        )
+        .bind(row.id)
+        .bind(credential_ciphertext)
+        .bind(credential_nonce)
+        .bind(access_token_expires_at)
+        .bind(refresh_token_expires_at)
+        .execute(&mut *transaction)
+        .await
+        .map_err(database_error)?;
+        sqlx::query(
+            "UPDATE agent_connections SET
             account_label = COALESCE($2, account_label),
             plan = COALESCE($3, plan),
-            availability_status = CASE WHEN $4 THEN 'active' ELSE availability_status END,
+            availability_status = CASE WHEN $5 THEN 'reauth_required'
+                                       WHEN $4 THEN 'active' ELSE availability_status END,
             rate_limited_until = CASE WHEN $4 THEN NULL ELSE rate_limited_until END,
             retry_claimed_at = CASE WHEN $4 THEN NULL ELSE retry_claimed_at END,
-            failure_message = CASE WHEN $4 THEN NULL ELSE failure_message END,
+            failure_message = CASE WHEN $5 THEN $6 WHEN $4 THEN NULL ELSE failure_message END,
             updated_at = NOW()
          WHERE id = $1",
-    )
-    .bind(row.id)
-    .bind(account_label)
-    .bind(plan)
-    .bind(restores_availability)
-    .execute(&mut *transaction)
-    .await
-    .map_err(database_error)?;
+        )
+        .bind(row.id)
+        .bind(account_label)
+        .bind(plan)
+        .bind(restores_availability)
+        .bind(verification_required)
+        .bind(ACCOUNT_VERIFICATION_REQUIRED_MESSAGE)
+        .execute(&mut *transaction)
+        .await
+        .map_err(database_error)?;
+        Ok::<(), ApiError>(())
+    }
+    .await;
+    if let Err(error) = persistence {
+        if mode.records_scheduled_attempt() {
+            sqlx::query("ROLLBACK TO SAVEPOINT scheduled_credential_persistence")
+                .execute(&mut *transaction)
+                .await
+                .map_err(database_error)?;
+        }
+        return finish_refresh_error(transaction, mode, error).await;
+    }
     transaction.commit().await.map_err(database_error)?;
     let updated = owned_connection_by_id(state, row.id).await?;
+    let remains_reauthorization_required = provider == AgentProvider::Gemini
+        && mode.restores_availability()
+        && verification_probe == crate::gateway::GeminiVerificationProbe::Inconclusive
+        && sqlx::query_scalar::<_, String>(
+            "SELECT availability_status FROM agent_connections WHERE id = $1",
+        )
+        .bind(row.id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(database_error)?
+            == "reauth_required";
+    if verification_required || remains_reauthorization_required {
+        return Ok(RefreshConnectionOutcome::ReauthorizationRequired(updated));
+    }
     connection_from_row(updated, None).map(|connection| RefreshConnectionOutcome::Connected {
         connection,
         refreshed: true,
@@ -1769,6 +2123,7 @@ fn should_refresh_credential(
         CredentialRefreshMode::Stale => {
             updated_at <= now - Duration::minutes(PROVIDER_CREDENTIAL_REFRESH_AFTER_MINUTES)
         }
+        CredentialRefreshMode::Nightly(day_start_utc) => updated_at < day_start_utc,
     }
 }
 
@@ -1783,15 +2138,7 @@ pub(crate) async fn provider_credential(
 
     match refresh_connected_connection(state, row, CredentialRefreshMode::NearExpiry).await? {
         RefreshConnectionOutcome::Connected { .. } => {}
-        RefreshConnectionOutcome::ReauthorizationRequired(row) => {
-            fail_connection(
-                state,
-                row,
-                "Provider authorization expired. Refresh this pool to reconnect.",
-            )
-            .await?;
-            return Err(ApiError::Forbidden);
-        }
+        RefreshConnectionOutcome::ReauthorizationRequired(_) => return Err(ApiError::Forbidden),
     }
     let row = owned_connection_by_id(state, connection_id).await?;
     if AgentConnectionStatus::from_str(&row.status)? != AgentConnectionStatus::Connected {
@@ -1817,6 +2164,54 @@ pub(crate) async fn provider_credential(
     Ok((AgentProvider::from_str(&row.provider)?, token))
 }
 
+/// Apply an observed Code Assist verification challenge only while the same
+/// access token is still stored. A completed reconnect changes the credential
+/// under this row lock and must not be overwritten by an older response.
+pub(crate) async fn mark_gemini_verification_required(
+    state: &AppState,
+    connection_id: Uuid,
+    observed_access_token: &str,
+) -> Result<bool, ApiError> {
+    let mut transaction = state.pool.begin().await.map_err(database_error)?;
+    let credential = sqlx::query_as::<_, CredentialRow>(
+        "SELECT credential_ciphertext, credential_nonce, access_token_expires_at,
+                refresh_token_expires_at, refresh_attempted_at, updated_at
+         FROM agent_connection_credentials WHERE connection_id = $1 FOR UPDATE",
+    )
+    .bind(connection_id)
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(database_error)?;
+    let Some(credential) = credential else {
+        transaction.commit().await.map_err(database_error)?;
+        return Ok(false);
+    };
+    let current: Value = decrypt_json(
+        &state.config.credential_encryption_key,
+        &credential.credential_ciphertext,
+        &credential.credential_nonce,
+    )?;
+    if current.get("access_token").and_then(Value::as_str) != Some(observed_access_token) {
+        transaction.commit().await.map_err(database_error)?;
+        return Ok(false);
+    }
+    let changed = sqlx::query(
+        "UPDATE agent_connections
+         SET availability_status = 'reauth_required', rate_limited_until = NULL,
+             retry_claimed_at = NULL, failure_message = $2, updated_at = NOW()
+         WHERE id = $1 AND provider = 'gemini' AND status = 'connected'",
+    )
+    .bind(connection_id)
+    .bind(ACCOUNT_VERIFICATION_REQUIRED_MESSAGE)
+    .execute(&mut *transaction)
+    .await
+    .map_err(database_error)?
+    .rows_affected()
+        > 0;
+    transaction.commit().await.map_err(database_error)?;
+    Ok(changed)
+}
+
 async fn refresh_provider_token(
     state: &AppState,
     provider: AgentProvider,
@@ -1828,7 +2223,10 @@ async fn refresh_provider_token(
             state
                 .http
                 .post(format!("{}/oauth/token", state.config.codex_issuer))
-                .header("user-agent", "codex_cli_rs/0.153.4")
+                .header(
+                    "user-agent",
+                    format!("codex_cli_rs/{}", state.config.codex_client_version),
+                )
                 .form(&[
                     ("grant_type", "refresh_token"),
                     ("client_id", CODEX_CLIENT_ID),
@@ -1881,8 +2279,15 @@ async fn refresh_provider_token(
     }
     .map_err(|error| ProviderRefreshError::Api(upstream_network_error(provider, error)))?;
 
-    if refresh_requires_reauthorization(response.status()) {
-        return Err(ProviderRefreshError::ReauthorizationRequired);
+    if !response.status().is_success() {
+        let status = response.status();
+        let payload = response.json::<Value>().await.ok();
+        if refresh_requires_reauthorization(provider, status, payload.as_ref()) {
+            return Err(ProviderRefreshError::ReauthorizationRequired);
+        }
+        return Err(ProviderRefreshError::Api(upstream_status_error(
+            provider, status,
+        )));
     }
 
     parse_token_response(provider, response)
@@ -1890,11 +2295,32 @@ async fn refresh_provider_token(
         .map_err(ProviderRefreshError::Api)
 }
 
-fn refresh_requires_reauthorization(status: reqwest::StatusCode) -> bool {
-    matches!(
+fn refresh_requires_reauthorization(
+    provider: AgentProvider,
+    status: reqwest::StatusCode,
+    payload: Option<&Value>,
+) -> bool {
+    if !matches!(
         status,
         reqwest::StatusCode::BAD_REQUEST | reqwest::StatusCode::UNAUTHORIZED
-    )
+    ) {
+        return false;
+    }
+    let error = payload
+        .and_then(|payload| payload.get("error"))
+        .and_then(|error| {
+            error
+                .as_str()
+                .or_else(|| error.get("type").and_then(Value::as_str))
+        });
+    if error == Some("invalid_grant") {
+        return true;
+    }
+    provider == AgentProvider::Chatgpt
+        && payload
+            .and_then(|payload| payload.pointer("/error/code"))
+            .and_then(Value::as_str)
+            == Some("refresh_token_invalidated")
 }
 
 fn merge_token_response(mut stored: Value, refreshed: Value) -> Value {
@@ -1930,7 +2356,7 @@ async fn fail_connection(
              failure_message = $2,
              updated_at = NOW()
          WHERE id = $1
-         RETURNING id, provider, status, account_label, plan, failure_message, created_at, updated_at",
+         RETURNING id, provider, status, availability_status, account_label, plan, failure_message, created_at, updated_at",
     )
     .bind(row.id)
     .bind(message)
@@ -1946,7 +2372,7 @@ async fn owned_connection(
     connection_id: Uuid,
 ) -> Result<ConnectionRow, ApiError> {
     sqlx::query_as::<_, ConnectionRow>(
-        "SELECT id, provider, status, account_label, plan, failure_message, created_at, updated_at
+        "SELECT id, provider, status, availability_status, account_label, plan, failure_message, created_at, updated_at
          FROM agent_connections WHERE id = $1 AND user_id = $2",
     )
     .bind(connection_id)
@@ -1962,7 +2388,7 @@ async fn owned_connection_by_id(
     connection_id: Uuid,
 ) -> Result<ConnectionRow, ApiError> {
     sqlx::query_as::<_, ConnectionRow>(
-        "SELECT id, provider, status, account_label, plan, failure_message, created_at, updated_at
+        "SELECT id, provider, status, availability_status, account_label, plan, failure_message, created_at, updated_at
          FROM agent_connections WHERE id = $1",
     )
     .bind(connection_id)
@@ -2019,6 +2445,7 @@ fn connection_from_row(
     Ok(AgentConnection {
         account_label: row.account_label,
         authorization,
+        availability_status: row.availability_status,
         created_at: row.created_at,
         failure_message: row.failure_message,
         id: row.id,
@@ -2059,16 +2486,6 @@ fn random_url_token(bytes: usize) -> String {
     let mut random = vec![0_u8; bytes];
     rand::rngs::OsRng.fill_bytes(&mut random);
     URL_SAFE_NO_PAD.encode(random)
-}
-
-fn poll_seconds(value: Option<&Value>) -> u64 {
-    value
-        .and_then(|value| {
-            value
-                .as_u64()
-                .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
-        })
-        .unwrap_or(DEFAULT_POLL_SECONDS)
 }
 
 fn parse_callback_value(value: &str) -> Result<(String, Option<String>), ApiError> {
@@ -2184,15 +2601,6 @@ fn validate_prompt_url(issuer: &str, prompt_url: &str) -> Result<(), ApiError> {
         .ok_or_else(|| upstream_payload_error(AgentProvider::Grok))
 }
 
-fn url_encode(value: &str) -> String {
-    Url::parse_with_params("https://hub.invalid", &[("user_code", value)])
-        .expect("static URL should parse")
-        .query()
-        .and_then(|query| query.strip_prefix("user_code="))
-        .unwrap_or_default()
-        .to_owned()
-}
-
 fn upstream_network_error(provider: AgentProvider, error: reqwest::Error) -> ApiError {
     eprintln!("{} authorization request failed: {error}", provider.label());
     ApiError::Provider(format!(
@@ -2238,16 +2646,18 @@ mod tests {
         routing::{get, post},
     };
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    use reqwest::Url;
     use serde_json::{Value, json};
     use tokio::net::TcpListener;
 
     use super::{
-        ANTIGRAVITY_CLIENT_VERSION, AgentProvider, AuthorizationSecret, CodexDeviceResponse,
-        CredentialRefreshMode, GEMINI_SCOPES, GROK_SCOPES, connection_metadata, decrypt_json,
-        encrypt_json, exchange_gemini_code, fetch_claude_profile, gemini_code_assist_body,
-        mask_account_label, merge_token_response, parse_callback_value, poll_seconds,
-        refresh_provider_token, refresh_requires_reauthorization, should_refresh_credential,
-        start_claude_authorization, start_gemini_authorization, start_grok_authorization,
+        ANTIGRAVITY_CLIENT_VERSION, AgentProvider, AuthorizationSecret, CODEX_REDIRECT_URI,
+        CODEX_SCOPES, CredentialRefreshMode, GEMINI_SCOPES, GROK_SCOPES, connection_metadata,
+        decrypt_json, encrypt_json, exchange_gemini_code, fetch_claude_profile,
+        gemini_code_assist_body, mask_account_label, merge_token_response, parse_callback_value,
+        provider_account_identity, reauthorization_identity_matches, refresh_provider_token,
+        refresh_requires_reauthorization, should_refresh_credential, start_claude_authorization,
+        start_codex_authorization, start_gemini_authorization, start_grok_authorization,
         token_claims, validate_api_key_input, validate_deepseek_key, validate_prompt_url,
     };
     use crate::AppConfig;
@@ -2637,21 +3047,26 @@ mod tests {
         );
     }
 
-    #[test]
-    fn codex_device_payload_accepts_the_live_string_interval_and_expiry() {
-        let payload: CodexDeviceResponse = serde_json::from_value(json!({
-            "device_auth_id": "device-secret",
-            "user_code": "ABCD-EFGH",
-            "interval": "5",
-            "expires_at": "2026-09-10T01:00:00Z"
-        }))
-        .unwrap();
+    #[tokio::test]
+    async fn codex_browser_authorization_uses_the_official_local_callback_contract() {
+        let state = crate::AppState {
+            config: AppConfig::default(),
+            http: reqwest::Client::new(),
+            gateway_http: reqwest::Client::new(),
+            pool: sqlx::postgres::PgPoolOptions::new()
+                .connect_lazy("postgres://localhost/hub_william_test")
+                .unwrap(),
+        };
+        let started = start_codex_authorization(&state).unwrap();
+        let url = Url::parse(&started.prompt_url).unwrap();
+        let query = url.query_pairs().collect::<HashMap<_, _>>();
 
-        assert_eq!(poll_seconds(payload.interval.as_ref()), 5);
-        assert_eq!(
-            payload.expires_at.unwrap().to_rfc3339(),
-            "2026-09-10T01:00:00+00:00"
-        );
+        assert_eq!(url.path(), "/oauth/authorize");
+        assert_eq!(query.get("redirect_uri").unwrap(), CODEX_REDIRECT_URI);
+        assert_eq!(query.get("scope").unwrap(), CODEX_SCOPES);
+        assert_eq!(query.get("code_challenge_method").unwrap(), "S256");
+        assert!(started.requires_callback_url);
+        assert_eq!(started.user_code, None);
     }
 
     #[test]
@@ -2684,7 +3099,7 @@ mod tests {
             }),
             None,
         );
-        assert_eq!(label.as_deref(), Some("API key ••••3456"));
+        assert_eq!(label.as_deref(), Some("••••3456"));
         assert_eq!(plan.as_deref(), Some("API"));
     }
 
@@ -2733,6 +3148,74 @@ mod tests {
         );
 
         assert_eq!(token_claims(&json!({ "id_token": token })), Some(claims));
+    }
+
+    #[test]
+    fn provider_account_identity_prefers_stable_ids_and_normalizes_email() {
+        let claims = json!({
+            "email": "OTHER@example.com",
+            "sub": "personal-user-123",
+            "https://api.openai.com/auth.chatgpt_account_id": "account-123"
+        });
+        let token = format!(
+            "header.{}.signature",
+            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap())
+        );
+        assert_eq!(
+            provider_account_identity(AgentProvider::Chatgpt, &json!({ "id_token": token }), None),
+            Some("chatgpt:sub:personal-user-123".to_owned())
+        );
+        assert_eq!(
+            provider_account_identity(
+                AgentProvider::Gemini,
+                &json!({ "email": " Owner@Example.COM " }),
+                None
+            ),
+            Some("email:owner@example.com".to_owned())
+        );
+    }
+
+    #[test]
+    fn chatgpt_identity_never_uses_a_workspace_or_legacy_cache_alone() {
+        assert_eq!(
+            provider_account_identity(
+                AgentProvider::Chatgpt,
+                &json!({
+                    "account_id": "shared-workspace", "hub_account_identity": "id:shared-workspace"
+                }),
+                None
+            ),
+            None
+        );
+        for email in ["person+maple@example.test", "person+juliet@example.test"] {
+            assert_eq!(
+                provider_account_identity(
+                    AgentProvider::Chatgpt,
+                    &json!({
+                        "account_id": "shared-workspace", "email": format!(" {} ", email.to_uppercase()),
+                        "hub_account_identity": "id:shared-workspace"
+                    }),
+                    None
+                ),
+                Some(format!("chatgpt:email:{email}"))
+            );
+        }
+    }
+
+    #[test]
+    fn reauthorization_requires_the_exact_same_provider_identity() {
+        assert!(reauthorization_identity_matches(
+            Some("id:account-1"),
+            Some("id:account-1")
+        ));
+        assert!(!reauthorization_identity_matches(
+            Some("id:account-1"),
+            Some("id:account-2")
+        ));
+        assert!(!reauthorization_identity_matches(
+            Some("id:account-1"),
+            None
+        ));
     }
 
     #[test]
@@ -2804,13 +3287,47 @@ mod tests {
     #[test]
     fn rejected_refresh_tokens_require_provider_authorization() {
         assert!(refresh_requires_reauthorization(
-            reqwest::StatusCode::BAD_REQUEST
+            AgentProvider::Gemini,
+            reqwest::StatusCode::BAD_REQUEST,
+            Some(&json!({ "error": "invalid_grant" }))
         ));
         assert!(refresh_requires_reauthorization(
-            reqwest::StatusCode::UNAUTHORIZED
+            AgentProvider::Claude,
+            reqwest::StatusCode::UNAUTHORIZED,
+            Some(&json!({ "error": { "type": "invalid_grant" } }))
+        ));
+        assert!(refresh_requires_reauthorization(
+            AgentProvider::Chatgpt,
+            reqwest::StatusCode::UNAUTHORIZED,
+            Some(&json!({ "error": {
+                "type": "invalid_request_error",
+                "code": "refresh_token_invalidated"
+            } }))
         ));
         assert!(!refresh_requires_reauthorization(
-            reqwest::StatusCode::TOO_MANY_REQUESTS
+            AgentProvider::Gemini,
+            reqwest::StatusCode::UNAUTHORIZED,
+            Some(&json!({ "error": { "code": "refresh_token_invalidated" } }))
+        ));
+        assert!(!refresh_requires_reauthorization(
+            AgentProvider::Gemini,
+            reqwest::StatusCode::UNAUTHORIZED,
+            Some(&json!({ "error": "invalid_client" }))
+        ));
+        assert!(!refresh_requires_reauthorization(
+            AgentProvider::Gemini,
+            reqwest::StatusCode::BAD_REQUEST,
+            Some(&json!({ "error": "invalid_request" }))
+        ));
+        assert!(!refresh_requires_reauthorization(
+            AgentProvider::Gemini,
+            reqwest::StatusCode::BAD_REQUEST,
+            None
+        ));
+        assert!(!refresh_requires_reauthorization(
+            AgentProvider::Gemini,
+            reqwest::StatusCode::TOO_MANY_REQUESTS,
+            Some(&json!({ "error": "invalid_grant" }))
         ));
     }
 
@@ -2831,6 +3348,26 @@ mod tests {
             None,
             now - chrono::Duration::minutes(60),
             now,
+        ));
+    }
+
+    #[test]
+    fn nightly_refresh_skips_credentials_already_checked_today() {
+        let day_start = chrono::DateTime::parse_from_rfc3339("2026-09-25T17:00:00Z")
+            .unwrap()
+            .to_utc();
+
+        assert!(should_refresh_credential(
+            CredentialRefreshMode::Nightly(day_start),
+            None,
+            day_start - chrono::Duration::seconds(1),
+            day_start,
+        ));
+        assert!(!should_refresh_credential(
+            CredentialRefreshMode::Nightly(day_start),
+            None,
+            day_start,
+            day_start,
         ));
     }
 

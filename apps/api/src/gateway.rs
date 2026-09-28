@@ -1,13 +1,17 @@
+use std::sync::{OnceLock, RwLock};
+use std::time::{Duration as StdDuration, Instant};
+
 use axum::{
     Json,
-    body::{Body, Bytes},
+    body::{Body, Bytes, to_bytes},
     extract::{OriginalUri, Path, State},
     http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header},
-    response::Response,
+    response::{IntoResponse, Response},
 };
 use axum_extra::extract::CookieJar;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Duration, Utc};
+use futures_util::{StreamExt, stream};
 use rand::RngCore;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -21,16 +25,297 @@ use crate::{
     auth::authenticated_user_id,
     connections::{ANTIGRAVITY_CLIENT_VERSION, load_gemini_code_assist, provider_credential},
     error::ApiError,
-    pool_share, usage,
 };
 
 const OPENAI_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
+const OPENAI_CODEX_MODELS_URL: &str = "https://chatgpt.com/backend-api/codex/models";
+const OPENAI_MODELS_URL: &str = "https://chatgpt.com/backend-api/models";
 const CLAUDE_MESSAGES_URL: &str = "https://api.anthropic.com/v1/messages";
+// Match the installed OpenCode/OMP gateway installers: Claude defaults to only 20 models.
+const CLAUDE_MODELS_URL: &str = "https://api.anthropic.com/v1/models?limit=1000";
 const CLAUDE_COUNT_TOKENS_URL: &str = "https://api.anthropic.com/v1/messages/count_tokens";
-const CLAUDE_MODELS_URL: &str = "https://api.anthropic.com/v1/models";
 const GROK_CHAT_URL: &str = "https://cli-chat-proxy.grok.com/v1/chat/completions";
 const GROK_RESPONSES_URL: &str = "https://cli-chat-proxy.grok.com/v1/responses";
 const GROK_MODELS_URL: &str = "https://cli-chat-proxy.grok.com/v1/models-v2";
+
+/// A browser request is pinned to one authorized account; existing key clients
+/// retain the provider-scoped candidate set and failover behavior.
+#[derive(Clone, Copy)]
+struct GatewaySelection {
+    user_id: Uuid,
+    connection_id: Option<Uuid>,
+    organization_id: Option<Uuid>,
+}
+
+fn reauthorization_error(selection: GatewaySelection) -> ApiError {
+    ApiError::Provider(
+        if selection.connection_id.is_some() {
+            "The selected account needs to reconnect. Its owner must complete provider reauthorization or account verification in Agents, or you can choose another account."
+        } else {
+            "Every accessible pool for this provider needs to reconnect."
+        }
+        .to_owned(),
+    )
+}
+
+impl From<Uuid> for GatewaySelection {
+    fn from(user_id: Uuid) -> Self {
+        Self {
+            user_id,
+            connection_id: None,
+            organization_id: None,
+        }
+    }
+}
+
+impl From<AuthorizedGatewayKey> for GatewaySelection {
+    fn from(key: AuthorizedGatewayKey) -> Self {
+        Self {
+            user_id: key.user_id,
+            connection_id: None,
+            organization_id: key.organization_id,
+        }
+    }
+}
+
+async fn selected_provider_candidates(
+    state: &AppState,
+    selection: GatewaySelection,
+    provider: AgentProvider,
+) -> Result<Vec<ProviderCandidate>, ApiError> {
+    let mut candidates = connected_provider_candidates(state, selection, provider).await?;
+    if let Some(connection_id) = selection.connection_id {
+        candidates.retain(|candidate| candidate.id == connection_id);
+    }
+    if candidates.is_empty() {
+        return Err(ApiError::Forbidden);
+    }
+    Ok(candidates)
+}
+
+pub(crate) async fn models_for_user(
+    state: &AppState,
+    user_id: Uuid,
+    connection_id: Uuid,
+    provider: AgentProvider,
+) -> Result<Response, ApiError> {
+    let selection = GatewaySelection {
+        user_id,
+        connection_id: Some(connection_id),
+        organization_id: None,
+    };
+    models_for_selection(state, selection, provider).await
+}
+
+pub(crate) async fn models_for_organization_user(
+    state: &AppState,
+    user_id: Uuid,
+    organization_id: Uuid,
+    connection_id: Uuid,
+    provider: AgentProvider,
+) -> Result<Response, ApiError> {
+    models_for_selection(
+        state,
+        GatewaySelection {
+            user_id,
+            connection_id: Some(connection_id),
+            organization_id: Some(organization_id),
+        },
+        provider,
+    )
+    .await
+}
+
+async fn models_for_selection(
+    state: &AppState,
+    selection: GatewaySelection,
+    provider: AgentProvider,
+) -> Result<Response, ApiError> {
+    match provider {
+        AgentProvider::Chatgpt => {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::ACCEPT, HeaderValue::from_static("application/json"));
+            headers.insert(
+                "openai-beta",
+                HeaderValue::from_static("responses=experimental"),
+            );
+            headers.insert(
+                "version",
+                HeaderValue::from_str(&state.config.codex_client_version)
+                    .map_err(|_| ApiError::Internal)?,
+            );
+            for base_url in [OPENAI_CODEX_MODELS_URL, OPENAI_MODELS_URL] {
+                let mut url = reqwest::Url::parse(base_url).map_err(|_| ApiError::Internal)?;
+                url.query_pairs_mut()
+                    .append_pair("client_version", &state.config.codex_client_version);
+                let response = proxy_request_for_user(
+                    state,
+                    selection,
+                    GatewayUpstream {
+                        provider,
+                        url: url.as_str(),
+                    },
+                    Method::GET,
+                    &axum::http::Uri::from_static("/"),
+                    &headers,
+                    Bytes::new(),
+                )
+                .await?;
+                if response.status().is_success()
+                    || response.status().as_u16() == 401
+                    || response.status().as_u16() == 403
+                {
+                    return Ok(response);
+                }
+            }
+            Err(ApiError::Provider(
+                "ChatGPT model discovery is temporarily unavailable.".to_owned(),
+            ))
+        }
+        AgentProvider::Claude => {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::ACCEPT, HeaderValue::from_static("application/json"));
+            proxy_request_for_user(
+                state,
+                selection,
+                GatewayUpstream {
+                    provider,
+                    url: CLAUDE_MODELS_URL,
+                },
+                Method::GET,
+                &axum::http::Uri::from_static("/"),
+                &headers,
+                Bytes::new(),
+            )
+            .await
+        }
+        AgentProvider::Gemini => Ok(gemini_models_for_user(state, selection)
+            .await?
+            .into_response()),
+        AgentProvider::Grok | AgentProvider::Deepseek => {
+            let url = if provider == AgentProvider::Grok {
+                GROK_MODELS_URL.to_owned()
+            } else {
+                format!("{}/models", state.config.deepseek_api_url)
+            };
+            let response = proxy_request_for_user(
+                state,
+                selection,
+                GatewayUpstream {
+                    provider,
+                    url: &url,
+                },
+                Method::GET,
+                &axum::http::Uri::from_static("/"),
+                &HeaderMap::new(),
+                Bytes::new(),
+            )
+            .await?;
+            filter_current_live_model_response(response, provider).await
+        }
+    }
+}
+
+pub(crate) async fn response_for_user(
+    state: &AppState,
+    user_id: Uuid,
+    connection_id: Uuid,
+    provider: AgentProvider,
+    model: &str,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let selection = GatewaySelection {
+        user_id,
+        connection_id: Some(connection_id),
+        organization_id: None,
+    };
+    response_for_selection(state, selection, provider, model, body).await
+}
+
+pub(crate) async fn response_for_organization_user(
+    state: &AppState,
+    user_id: Uuid,
+    organization_id: Uuid,
+    connection_id: Uuid,
+    provider: AgentProvider,
+    model: &str,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    response_for_selection(
+        state,
+        GatewaySelection {
+            user_id,
+            connection_id: Some(connection_id),
+            organization_id: Some(organization_id),
+        },
+        provider,
+        model,
+        body,
+    )
+    .await
+}
+
+async fn response_for_selection(
+    state: &AppState,
+    selection: GatewaySelection,
+    provider: AgentProvider,
+    model: &str,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    if provider == AgentProvider::Gemini {
+        return gemini_proxy_request_for_user(
+            state,
+            selection,
+            model,
+            GeminiOperation::StreamGenerate,
+            body,
+        )
+        .await;
+    }
+    let (url, body) = match provider {
+        AgentProvider::Chatgpt => (
+            OPENAI_RESPONSES_URL.to_owned(),
+            strip_unsupported_codex_fields(body),
+        ),
+        AgentProvider::Claude => (
+            CLAUDE_MESSAGES_URL.to_owned(),
+            ensure_claude_billing_header(body, &state.config.claude_client_version),
+        ),
+        AgentProvider::Grok => (GROK_RESPONSES_URL.to_owned(), body),
+        AgentProvider::Deepseek => (format!("{}/responses", state.config.deepseek_api_url), body),
+        AgentProvider::Gemini => unreachable!("Gemini uses its native gateway path"),
+    };
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    headers.insert(
+        header::ACCEPT,
+        HeaderValue::from_static("text/event-stream"),
+    );
+    proxy_request_for_user(
+        state,
+        selection,
+        GatewayUpstream {
+            provider,
+            url: &url,
+        },
+        Method::POST,
+        &axum::http::Uri::from_static("/"),
+        &headers,
+        body,
+    )
+    .await
+}
+const MAX_UPSTREAM_ATTEMPTS: usize = 4;
+const MAX_SAME_CANDIDATE_ATTEMPTS: usize = 2;
+const RETRY_BASE_DELAY_MS: u64 = 500;
+const RETRY_MAX_DELAY_MS: u64 = 2_000;
+const DOCS_CACHE_TTL: StdDuration = StdDuration::from_secs(3600);
+
+static CLAUDE_DOCS_CACHE: OnceLock<RwLock<(Instant, Value)>> = OnceLock::new();
+static OPENAI_DOCS_CACHE: OnceLock<RwLock<(Instant, Value)>> = OnceLock::new();
 const ANTIGRAVITY_MODELS: [&str; 14] = [
     "gemini-3.8-flash-high",
     "gemini-3.8-flash-medium",
@@ -75,6 +360,7 @@ struct GatewayKeyRow {
 pub(crate) struct AuthorizedGatewayKey {
     pub id: Uuid,
     pub user_id: Uuid,
+    pub organization_id: Option<Uuid>,
 }
 
 #[derive(Debug, FromRow)]
@@ -84,11 +370,335 @@ struct ProviderCandidate {
     rate_limited_until: Option<DateTime<Utc>>,
 }
 
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
+struct TokenUsage {
+    input_tokens: Option<i64>,
+    output_tokens: Option<i64>,
+    cached_tokens: Option<i64>,
+}
+
+impl TokenUsage {
+    fn has_tokens(self) -> bool {
+        self.input_tokens.is_some() || self.output_tokens.is_some() || self.cached_tokens.is_some()
+    }
+}
+
+const MAX_USAGE_PAYLOAD_BYTES: usize = 1024 * 1024;
+
+struct UsageObserver {
+    provider: AgentProvider,
+    sse: bool,
+    pending: Vec<u8>,
+    event_data: Vec<u8>,
+    overflow: bool,
+    skip_event: bool,
+    completed: bool,
+    failed: bool,
+    usage: TokenUsage,
+    claude_stop_reason: Option<String>,
+    chat_completion_finished: bool,
+    claude_input_tokens: Option<i64>,
+    claude_cache_read_tokens: Option<i64>,
+    claude_cache_creation_tokens: Option<i64>,
+}
+
+impl UsageObserver {
+    fn new(provider: AgentProvider, sse: bool) -> Self {
+        Self {
+            provider,
+            sse,
+            pending: Vec::new(),
+            event_data: Vec::new(),
+            overflow: false,
+            skip_event: false,
+            completed: false,
+            failed: false,
+            usage: TokenUsage::default(),
+            claude_stop_reason: None,
+            chat_completion_finished: false,
+            claude_input_tokens: None,
+            claude_cache_read_tokens: None,
+            claude_cache_creation_tokens: None,
+        }
+    }
+
+    fn push(&mut self, bytes: &[u8]) {
+        if !self.sse {
+            if !self.overflow
+                && self.pending.len().saturating_add(bytes.len()) <= MAX_USAGE_PAYLOAD_BYTES
+            {
+                self.pending.extend_from_slice(bytes);
+            } else {
+                self.pending.clear();
+                self.overflow = true;
+            }
+            return;
+        }
+
+        for &byte in bytes {
+            if byte == b'\n' {
+                if !self.overflow {
+                    let line = std::mem::take(&mut self.pending);
+                    self.read_sse_line(&line);
+                } else {
+                    self.pending.clear();
+                    self.overflow = false;
+                    self.event_data.clear();
+                    self.skip_event = true;
+                }
+            } else if self.pending.len() < MAX_USAGE_PAYLOAD_BYTES {
+                self.pending.push(byte);
+            } else {
+                self.overflow = true;
+            }
+        }
+    }
+
+    fn read_sse_line(&mut self, line: &[u8]) {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if line.is_empty() {
+            if !self.skip_event {
+                self.read_event();
+            }
+            self.skip_event = false;
+            self.event_data.clear();
+            return;
+        }
+        if self.skip_event {
+            return;
+        }
+        let Some(data) = line.strip_prefix(b"data:") else {
+            return;
+        };
+        let data = data.strip_prefix(b" ").unwrap_or(data);
+        if data == b"[DONE]" {
+            if self.chat_completion_finished && !self.failed {
+                self.completed = true;
+            }
+            return;
+        }
+        if self
+            .event_data
+            .len()
+            .saturating_add(data.len())
+            .saturating_add(1)
+            > MAX_USAGE_PAYLOAD_BYTES
+        {
+            self.event_data.clear();
+            self.skip_event = true;
+            return;
+        }
+        if !self.event_data.is_empty() {
+            self.event_data.push(b'\n');
+        }
+        self.event_data.extend_from_slice(data);
+    }
+
+    fn read_event(&mut self) {
+        if self.event_data.is_empty() {
+            return;
+        }
+        if let Ok(value) = serde_json::from_slice::<Value>(&self.event_data) {
+            self.read_value(&value);
+        }
+        self.event_data.clear();
+    }
+
+    fn read_value(&mut self, value: &Value) {
+        match self.provider {
+            AgentProvider::Claude => match value.get("type").and_then(Value::as_str) {
+                Some("message_start") => self.read_claude_usage(value.pointer("/message/usage")),
+                Some("message_delta") => {
+                    self.read_claude_usage(value.get("usage"));
+                    if let Some(reason) =
+                        value.pointer("/delta/stop_reason").and_then(Value::as_str)
+                    {
+                        self.claude_stop_reason = Some(reason.to_owned());
+                    }
+                }
+                Some("message_stop") => {
+                    self.completed = matches!(
+                        self.claude_stop_reason.as_deref(),
+                        Some("end_turn" | "stop_sequence" | "refusal")
+                    );
+                }
+                _ if !self.sse => {
+                    self.read_claude_usage(value.get("usage"));
+                    self.completed = matches!(
+                        value.get("stop_reason").and_then(Value::as_str),
+                        Some("end_turn" | "stop_sequence" | "refusal")
+                    );
+                }
+                _ => {}
+            },
+            AgentProvider::Gemini => {
+                let response = value.get("response").unwrap_or(value);
+                if response
+                    .get("candidates")
+                    .and_then(Value::as_array)
+                    .is_some_and(|candidates| {
+                        candidates.iter().any(|candidate| {
+                            candidate.get("index").and_then(Value::as_i64).unwrap_or(0) == 0
+                                && candidate.get("finishReason").and_then(Value::as_str)
+                                    == Some("STOP")
+                        })
+                    })
+                {
+                    self.completed = true;
+                }
+                let usage = value
+                    .pointer("/response/usageMetadata")
+                    .or_else(|| value.get("usageMetadata"))
+                    .filter(|usage| usage.is_object());
+                if let Some(usage) = usage {
+                    if let Some(input) = nonnegative_i64(usage.get("promptTokenCount")) {
+                        self.usage.input_tokens = Some(input);
+                    }
+                    if let Some(cached) = nonnegative_i64(usage.get("cachedContentTokenCount")) {
+                        self.usage.cached_tokens = Some(cached);
+                    }
+                    if let Some(output) = nonnegative_i64(usage.get("totalTokenCount"))
+                        .and_then(|total| {
+                            self.usage
+                                .input_tokens
+                                .and_then(|input| total.checked_sub(input))
+                        })
+                        .or_else(|| {
+                            nonnegative_i64(usage.get("candidatesTokenCount")).and_then(
+                                |candidate| {
+                                    candidate.checked_add(
+                                        nonnegative_i64(usage.get("thoughtsTokenCount"))
+                                            .unwrap_or(0),
+                                    )
+                                },
+                            )
+                        })
+                    {
+                        self.usage.output_tokens = Some(output);
+                    }
+                }
+            }
+            AgentProvider::Chatgpt | AgentProvider::Grok | AgentProvider::Deepseek => {
+                if matches!(
+                    value.get("status").and_then(Value::as_str),
+                    Some("failed" | "incomplete")
+                ) {
+                    self.failed = true;
+                    self.completed = false;
+                }
+                match value.get("type").and_then(Value::as_str) {
+                    Some("response.completed") if !self.failed => self.completed = true,
+                    Some("response.failed" | "response.incomplete") => {
+                        self.completed = false;
+                        self.failed = true;
+                    }
+                    _ => {}
+                }
+                if value
+                    .get("choices")
+                    .and_then(Value::as_array)
+                    .is_some_and(|choices| {
+                        choices.iter().any(|choice| {
+                            matches!(
+                                choice.get("finish_reason").and_then(Value::as_str),
+                                Some("stop" | "tool_calls" | "function_call")
+                            )
+                        })
+                    })
+                {
+                    self.chat_completion_finished = true;
+                }
+                let usage = value
+                    .pointer("/response/usage")
+                    .or_else(|| value.get("usage"))
+                    .filter(|usage| usage.is_object());
+                if let Some(usage) = usage {
+                    if let Some(input) = nonnegative_i64(usage.get("input_tokens"))
+                        .or_else(|| nonnegative_i64(usage.get("prompt_tokens")))
+                    {
+                        self.usage.input_tokens = Some(input);
+                    }
+                    if let Some(output) = nonnegative_i64(usage.get("output_tokens"))
+                        .or_else(|| nonnegative_i64(usage.get("completion_tokens")))
+                    {
+                        self.usage.output_tokens = Some(output);
+                    }
+                    if let Some(cached) =
+                        nonnegative_i64(usage.pointer("/input_tokens_details/cached_tokens"))
+                            .or_else(|| {
+                                nonnegative_i64(
+                                    usage.pointer("/prompt_tokens_details/cached_tokens"),
+                                )
+                            })
+                    {
+                        self.usage.cached_tokens = Some(cached);
+                    }
+                }
+            }
+        }
+    }
+
+    fn read_claude_usage(&mut self, usage: Option<&Value>) {
+        let Some(usage) = usage else { return };
+        if let Some(input) = nonnegative_i64(usage.get("input_tokens")) {
+            self.claude_input_tokens = Some(input);
+        }
+        if let Some(cache_read) = nonnegative_i64(usage.get("cache_read_input_tokens")) {
+            self.claude_cache_read_tokens = Some(cache_read);
+            self.usage.cached_tokens = Some(cache_read);
+        }
+        if let Some(cache_creation) = nonnegative_i64(usage.get("cache_creation_input_tokens")) {
+            self.claude_cache_creation_tokens = Some(cache_creation);
+        }
+        self.usage.input_tokens = self
+            .claude_input_tokens
+            .and_then(|input| input.checked_add(self.claude_cache_read_tokens.unwrap_or(0)))
+            .and_then(|total| total.checked_add(self.claude_cache_creation_tokens.unwrap_or(0)));
+        if let Some(output) = nonnegative_i64(usage.get("output_tokens")) {
+            self.usage.output_tokens = Some(output);
+        }
+    }
+
+    fn finish_with_completion(mut self) -> (bool, Option<TokenUsage>) {
+        if self.sse {
+            if !self.pending.is_empty() && !self.overflow {
+                let line = std::mem::take(&mut self.pending);
+                self.read_sse_line(&line);
+            }
+            if !self.skip_event {
+                self.read_event();
+            }
+            if !self.completed || self.failed {
+                return (false, None);
+            }
+        } else if !self.overflow {
+            let payload = std::mem::take(&mut self.pending);
+            let Ok(value) = serde_json::from_slice::<Value>(&payload) else {
+                return (false, None);
+            };
+            self.read_value(&value);
+            if self.failed
+                || matches!(self.provider, AgentProvider::Claude | AgentProvider::Gemini)
+                    && !self.completed
+            {
+                return (false, None);
+            }
+        }
+        (true, self.usage.has_tokens().then_some(self.usage))
+    }
+}
+
+fn nonnegative_i64(value: Option<&Value>) -> Option<i64> {
+    value.and_then(Value::as_i64).filter(|value| *value >= 0)
+}
+
 #[derive(Debug, PartialEq)]
 enum UpstreamDisposition {
     Return,
     RateLimit,
     Reauthorize,
+    RetryTransient,
+    NextPool,
 }
 
 #[utoipa::path(
@@ -247,17 +857,152 @@ pub async fn openai_models(
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
     let authorized = authorize_gateway_key(&state, &headers).await?;
-    connected_provider_ids(&state, authorized.user_id, AgentProvider::Chatgpt).await?;
+    connected_provider_ids(&state, authorized.into(), AgentProvider::Chatgpt).await?;
 
-    Ok(Json(json!({
+    Ok(Json(fetch_or_cached_openai_catalogue(&state.http).await))
+}
+
+pub(crate) fn default_openai_model_catalogue() -> Value {
+    json!({
         "object": "list",
         "data": [
-            { "id": "gpt-6-astra", "object": "model", "owned_by": "openai" },
-            { "id": "gpt-5.6-sol", "object": "model", "owned_by": "openai" },
-            { "id": "gpt-5.6-terra", "object": "model", "owned_by": "openai" },
-            { "id": "gpt-5.6-luna", "object": "model", "owned_by": "openai" }
+            { "id": "gpt-6-astra", "name": "GPT-6 Astra", "object": "model", "owned_by": "openai" },
+            { "id": "gpt-6-sol", "name": "GPT-6 Sol", "object": "model", "owned_by": "openai" },
+            { "id": "gpt-6-luna", "name": "GPT-6 Luna", "object": "model", "owned_by": "openai" },
+            { "id": "gpt-5.6-sol", "name": "GPT-5.6 Sol", "object": "model", "owned_by": "openai" },
+            { "id": "gpt-5.6-terra", "name": "GPT-5.6 Terra", "object": "model", "owned_by": "openai" },
+            { "id": "gpt-5.6-luna", "name": "GPT-5.6 Luna", "object": "model", "owned_by": "openai" }
         ]
-    })))
+    })
+}
+
+pub(crate) fn parse_openai_models_markdown(content: &str) -> Option<Value> {
+    let recommended = content.split_once("## Recommended models")?.1;
+    let recommended = recommended.split("\n## ").next().unwrap_or(recommended);
+    let mut models = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for line in recommended.lines() {
+        let trimmed = line.trim();
+        let Some(model_id) = trimmed
+            .strip_prefix("slug=\"")
+            .and_then(|value| value.strip_suffix('"'))
+        else {
+            continue;
+        };
+        push_openai_model(&mut models, &mut seen, model_id);
+    }
+
+    // The older generation remains current during rollout, but has no ModelDetails
+    // block. Read only the explicit rollout paragraph in the recommended section.
+    if let Some(rollout) = recommended
+        .split("\n\n")
+        .find(|paragraph| paragraph.contains("remain available during the rollout"))
+    {
+        for fragment in rollout.split("GPT-").skip(1) {
+            let mut words = fragment.split_whitespace();
+            let (Some(version), Some(family)) = (words.next(), words.next()) else {
+                continue;
+            };
+            let version = version.trim_matches(|c: char| !c.is_ascii_digit() && c != '.');
+            let family = family.trim_matches(|c: char| !c.is_ascii_alphabetic());
+            if version.chars().any(|c| c.is_ascii_digit()) && !family.is_empty() {
+                let model_id = format!("gpt-{version}-{}", family.to_ascii_lowercase());
+                push_openai_model(&mut models, &mut seen, &model_id);
+            }
+        }
+    }
+
+    if models.is_empty() {
+        None
+    } else {
+        Some(json!({ "object": "list", "data": models }))
+    }
+}
+
+fn push_openai_model(
+    models: &mut Vec<Value>,
+    seen: &mut std::collections::HashSet<String>,
+    id: &str,
+) {
+    if !id.starts_with("gpt-") || !seen.insert(id.to_owned()) {
+        return;
+    }
+    let suffix = id.strip_prefix("gpt-").unwrap_or(id);
+    let name = format!(
+        "GPT-{}",
+        suffix
+            .split('-')
+            .enumerate()
+            .map(|(index, part)| {
+                if index == 0 {
+                    part.to_owned()
+                } else {
+                    let mut chars = part.chars();
+                    match chars.next() {
+                        Some(first) => first.to_uppercase().chain(chars).collect(),
+                        None => String::new(),
+                    }
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    models.push(json!({"id": id, "name": name, "object": "model", "owned_by": "openai"}));
+}
+
+pub(crate) async fn fetch_or_cached_openai_catalogue(http: &reqwest::Client) -> Value {
+    let cache = OPENAI_DOCS_CACHE.get_or_init(|| {
+        RwLock::new((
+            Instant::now()
+                .checked_sub(DOCS_CACHE_TTL)
+                .unwrap_or_else(Instant::now),
+            Value::Null,
+        ))
+    });
+    if let Some(cached) = cache.read().ok().and_then(|g| {
+        if g.0.elapsed() < DOCS_CACHE_TTL && !g.1.is_null() {
+            Some(g.1.clone())
+        } else {
+            None
+        }
+    }) {
+        return cached;
+    }
+
+    let fetched = async {
+        let response = http
+            .get("https://learn.chatgpt.com/docs/models.md")
+            .timeout(StdDuration::from_secs(6))
+            .header("User-Agent", "hub-william")
+            .send()
+            .await
+            .ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        let text = response.text().await.ok()?;
+        parse_openai_models_markdown(&text)
+    }
+    .await;
+
+    if let Some(catalogue) = fetched {
+        if let Ok(mut guard) = cache.write() {
+            *guard = (Instant::now(), catalogue.clone());
+        }
+        return catalogue;
+    }
+
+    if let Some(stale) = cache.read().ok().and_then(|g| {
+        if !g.1.is_null() {
+            Some(g.1.clone())
+        } else {
+            None
+        }
+    }) {
+        return stale;
+    }
+    default_openai_model_catalogue()
 }
 
 pub async fn claude_messages(
@@ -266,6 +1011,7 @@ pub async fn claude_messages(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
+    let body = ensure_claude_billing_header(body, &state.config.claude_client_version);
     proxy_request(
         &state,
         AgentProvider::Claude,
@@ -284,6 +1030,7 @@ pub async fn claude_count_tokens(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
+    let body = ensure_claude_billing_header(body, &state.config.claude_client_version);
     proxy_request(
         &state,
         AgentProvider::Claude,
@@ -294,6 +1041,44 @@ pub async fn claude_count_tokens(
         body,
     )
     .await
+}
+
+pub(crate) fn ensure_claude_billing_header(body: Bytes, version: &str) -> Bytes {
+    let Ok(mut value) = serde_json::from_slice::<Value>(&body) else {
+        return body;
+    };
+    let billing_text =
+        format!("x-anthropic-billing-header: cc_version={version}.bd6; cc_entrypoint=sdk-cli;");
+
+    let Some(map) = value.as_object_mut() else {
+        return body;
+    };
+
+    match map.get_mut("system") {
+        Some(Value::String(s)) => {
+            if !s.contains("x-anthropic-billing-header") {
+                *s = format!("{billing_text}\n\n{s}");
+            }
+        }
+        Some(Value::Array(arr)) => {
+            let already_has = arr.iter().any(|item| {
+                item.get("text")
+                    .and_then(Value::as_str)
+                    .is_some_and(|t| t.contains("x-anthropic-billing-header"))
+            });
+            if !already_has {
+                arr.insert(0, json!({ "type": "text", "text": billing_text }));
+            }
+        }
+        _ => {
+            map.insert(
+                "system".to_string(),
+                json!([{ "type": "text", "text": billing_text }]),
+            );
+        }
+    }
+
+    serde_json::to_vec(&value).map(Bytes::from).unwrap_or(body)
 }
 
 pub async fn grok_chat(
@@ -334,19 +1119,183 @@ pub async fn grok_responses(
 
 pub async fn claude_models(
     State(state): State<AppState>,
-    OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
-) -> Result<Response, ApiError> {
-    proxy_request(
-        &state,
-        AgentProvider::Claude,
-        CLAUDE_MODELS_URL,
-        Method::GET,
-        &uri,
-        &headers,
-        Bytes::new(),
-    )
-    .await
+) -> Result<Json<Value>, ApiError> {
+    let authorized = authorize_gateway_key(&state, &headers).await?;
+    connected_provider_ids(&state, authorized.into(), AgentProvider::Claude).await?;
+
+    Ok(Json(fetch_or_cached_claude_catalogue(&state.http).await))
+}
+
+pub(crate) fn default_claude_model_catalogue() -> Value {
+    let standard_effort = json!({
+        "supported": true,
+        "low": { "supported": true },
+        "medium": { "supported": true },
+        "high": { "supported": true },
+        "xhigh": { "supported": true },
+        "max": { "supported": true }
+    });
+
+    json!({
+        "object": "list",
+        "data": [
+            {
+                "id": "claude-fable-5-1",
+                "display_name": "Claude Fable 5.1",
+                "capabilities": {
+                    "effort": standard_effort
+                }
+            },
+            {
+                "id": "claude-opus-5-5",
+                "display_name": "Claude Opus 5.5",
+                "capabilities": {
+                    "effort": standard_effort
+                }
+            },
+            {
+                "id": "claude-sonnet-5",
+                "display_name": "Claude Sonnet 5",
+                "capabilities": {
+                    "effort": standard_effort
+                }
+            },
+            {
+                "id": "claude-haiku-4-5-20251001",
+                "display_name": "Claude Haiku 4.5"
+            }
+        ]
+    })
+}
+
+pub(crate) fn parse_claude_models_markdown(content: &str) -> Option<Value> {
+    let current = content.split_once("## Compare models")?.1;
+    let current = current.split("\n## ").next().unwrap_or(current);
+    let mut header_cols: Vec<String> = Vec::new();
+    let mut id_cols: Vec<String> = Vec::new();
+    let mut effort_cols: Vec<String> = Vec::new();
+
+    for line in current.lines() {
+        let parts: Vec<&str> = line.split('|').map(str::trim).collect();
+        if parts.len() > 2 {
+            let label = parts[1].trim_start_matches('[');
+            let label = label.split(']').next().unwrap_or(label).trim();
+            if label == "Feature" {
+                header_cols = parts[2..parts.len() - 1]
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect();
+            } else if label == "Claude API ID" {
+                id_cols = parts[2..parts.len() - 1]
+                    .iter()
+                    .map(|s| s.trim_matches(|c| c == '`' || c == ' ').to_string())
+                    .collect();
+            } else if label == "Default effort" {
+                effort_cols = parts[2..parts.len() - 1]
+                    .iter()
+                    .map(|s| s.trim_matches(|c| c == '`' || c == ' ').to_string())
+                    .collect();
+            }
+        }
+    }
+
+    if id_cols.is_empty() {
+        return None;
+    }
+
+    let standard_effort = json!({
+        "supported": true,
+        "low": { "supported": true },
+        "medium": { "supported": true },
+        "high": { "supported": true },
+        "xhigh": { "supported": true },
+        "max": { "supported": true }
+    });
+
+    let mut models = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for (i, mid) in id_cols.into_iter().enumerate() {
+        if mid.is_empty() || seen.contains(&mid) {
+            continue;
+        }
+        seen.insert(mid.clone());
+        let name = header_cols.get(i).cloned().unwrap_or_else(|| mid.clone());
+        let effort_supported = effort_cols
+            .get(i)
+            .map(|e| !e.eq_ignore_ascii_case("not supported") && !e.is_empty())
+            .unwrap_or(false);
+
+        let mut entry = json!({
+            "id": mid,
+            "display_name": name,
+        });
+        if effort_supported {
+            entry["capabilities"] = json!({ "effort": standard_effort });
+        }
+        models.push(entry);
+    }
+
+    if models.is_empty() {
+        None
+    } else {
+        Some(json!({ "object": "list", "data": models }))
+    }
+}
+
+pub(crate) async fn fetch_or_cached_claude_catalogue(http: &reqwest::Client) -> Value {
+    let cache = CLAUDE_DOCS_CACHE.get_or_init(|| {
+        RwLock::new((
+            Instant::now()
+                .checked_sub(DOCS_CACHE_TTL)
+                .unwrap_or_else(Instant::now),
+            Value::Null,
+        ))
+    });
+    if let Some(cached) = cache.read().ok().and_then(|g| {
+        if g.0.elapsed() < DOCS_CACHE_TTL && !g.1.is_null() {
+            Some(g.1.clone())
+        } else {
+            None
+        }
+    }) {
+        return cached;
+    }
+
+    let fetched = async {
+        let response = http
+            .get("https://platform.claude.com/docs/en/models/overview.md")
+            .timeout(StdDuration::from_secs(6))
+            .header("User-Agent", "hub-william")
+            .send()
+            .await
+            .ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        let text = response.text().await.ok()?;
+        parse_claude_models_markdown(&text)
+    }
+    .await;
+
+    if let Some(catalogue) = fetched {
+        if let Ok(mut guard) = cache.write() {
+            *guard = (Instant::now(), catalogue.clone());
+        }
+        return catalogue;
+    }
+
+    if let Some(stale) = cache.read().ok().and_then(|g| {
+        if !g.1.is_null() {
+            Some(g.1.clone())
+        } else {
+            None
+        }
+    }) {
+        return stale;
+    }
+    default_claude_model_catalogue()
 }
 
 pub async fn deepseek_chat(
@@ -390,7 +1339,7 @@ pub async fn deepseek_models(
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    proxy_request(
+    let response = proxy_request(
         &state,
         AgentProvider::Deepseek,
         &format!("{}/models", state.config.deepseek_api_url),
@@ -399,7 +1348,8 @@ pub async fn deepseek_models(
         &headers,
         Bytes::new(),
     )
-    .await
+    .await?;
+    filter_current_live_model_response(response, AgentProvider::Deepseek).await
 }
 
 pub async fn grok_models(
@@ -407,7 +1357,7 @@ pub async fn grok_models(
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    proxy_request(
+    let response = proxy_request(
         &state,
         AgentProvider::Grok,
         GROK_MODELS_URL,
@@ -416,7 +1366,69 @@ pub async fn grok_models(
         &headers,
         Bytes::new(),
     )
-    .await
+    .await?;
+    filter_current_live_model_response(response, AgentProvider::Grok).await
+}
+
+pub(crate) fn current_live_model_id(provider: AgentProvider, id: &str) -> bool {
+    match provider {
+        AgentProvider::Deepseek => matches!(id, "deepseek-flash" | "deepseek-v4-pro"),
+        AgentProvider::Grok => id == "grok-4.7",
+        _ => true,
+    }
+}
+
+fn filter_current_live_model_catalogue(
+    payload: &mut Value,
+    provider: AgentProvider,
+) -> Result<(), ApiError> {
+    let key = if payload.get("data").is_some() {
+        "data"
+    } else {
+        "models"
+    };
+    let models = payload
+        .get_mut(key)
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| {
+            ApiError::Provider("The provider returned an invalid model catalogue.".to_owned())
+        })?;
+    models.retain(|model| {
+        model
+            .get("id")
+            .or_else(|| model.get("slug"))
+            .and_then(Value::as_str)
+            .is_some_and(|id| current_live_model_id(provider, id))
+    });
+    Ok(())
+}
+
+async fn filter_current_live_model_response(
+    response: Response,
+    provider: AgentProvider,
+) -> Result<Response, ApiError> {
+    if !response.status().is_success() {
+        return Ok(response);
+    }
+    let (mut parts, body) = response.into_parts();
+    let bytes = to_bytes(body, 8 * 1024 * 1024)
+        .await
+        .map_err(|_| ApiError::Provider("The model catalogue could not be read.".to_owned()))?;
+    let mut payload: Value = serde_json::from_slice(&bytes).map_err(|_| {
+        ApiError::Provider("The provider returned an invalid model catalogue.".to_owned())
+    })?;
+    filter_current_live_model_catalogue(&mut payload, provider)?;
+    parts.headers.remove(header::CONTENT_LENGTH);
+    parts.headers.remove(header::CONTENT_ENCODING);
+    parts.headers.remove(header::ETAG);
+    parts.headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    Ok(Response::from_parts(
+        parts,
+        Body::from(serde_json::to_vec(&payload).map_err(|_| ApiError::Internal)?),
+    ))
 }
 
 pub async fn gemini_request(
@@ -434,14 +1446,25 @@ pub async fn gemini_models(
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
     let authorized = authorize_gateway_key(&state, &headers).await?;
-    let candidates =
-        connected_provider_candidates(&state, authorized.user_id, AgentProvider::Gemini).await?;
+    gemini_models_for_user(&state, authorized.into()).await
+}
+
+async fn gemini_models_for_user(
+    state: &AppState,
+    selection: GatewaySelection,
+) -> Result<Json<Value>, ApiError> {
+    let candidates = selected_provider_candidates(state, selection, AgentProvider::Gemini).await?;
     let mut saw_rate_limit = false;
     let mut saw_reauthorization = false;
     let mut last_error = None;
+    let candidate_count = candidates.len();
+    let mut attempts_used = 0;
 
-    for candidate in candidates {
-        let claimed_probe = match claim_candidate(&state, &candidate).await {
+    'candidates: for (candidate_index, candidate) in candidates.into_iter().enumerate() {
+        if attempts_used >= MAX_UPSTREAM_ATTEMPTS {
+            break;
+        }
+        let claimed_probe = match claim_candidate(state, &candidate).await {
             Ok(Some(claimed_probe)) => claimed_probe,
             Ok(None) => {
                 if candidate.availability_status == "reauth_required" {
@@ -453,11 +1476,11 @@ pub async fn gemini_models(
             }
             Err(error) => return Err(error),
         };
-        let (credential_provider, token) = match provider_credential(&state, candidate.id).await {
+        let (credential_provider, token) = match provider_credential(state, candidate.id).await {
             Ok(credential) => credential,
             Err(error) => {
                 if claimed_probe {
-                    release_probe(&state, candidate.id).await?;
+                    release_probe(state, candidate.id).await?;
                 }
                 last_error = Some(error);
                 continue;
@@ -469,76 +1492,141 @@ pub async fn gemini_models(
             .and_then(Value::as_str);
         let (Some(access_token), Some(project)) = (access_token, project) else {
             if claimed_probe {
-                release_probe(&state, candidate.id).await?;
+                release_probe(state, candidate.id).await?;
             }
             last_error = Some(ApiError::Forbidden);
             continue;
         };
         if credential_provider != AgentProvider::Gemini {
             if claimed_probe {
-                release_probe(&state, candidate.id).await?;
+                release_probe(state, candidate.id).await?;
             }
             last_error = Some(ApiError::Forbidden);
             continue;
         }
-        let project = current_gemini_project(&state, access_token, project).await;
-        let upstream = match state
-            .gateway_http
-            .post(format!(
-                "{}/v1internal:fetchAvailableModels",
-                state.config.gemini_code_assist_url.trim_end_matches('/')
-            ))
-            .bearer_auth(access_token)
-            .header("user-agent", ANTIGRAVITY_CLIENT_VERSION)
-            .json(&json!({ "project": project }))
-            .send()
-            .await
-        {
-            Ok(upstream) => upstream,
-            Err(error) => {
-                if claimed_probe {
-                    release_probe(&state, candidate.id).await?;
+        let project = current_gemini_project(state, access_token, project).await;
+        let upstream_url = format!(
+            "{}/v1internal:fetchAvailableModels",
+            state.config.gemini_code_assist_url.trim_end_matches('/')
+        );
+        let mut candidate_attempts = 0;
+        loop {
+            attempts_used += 1;
+            candidate_attempts += 1;
+            let mut upstream = match state
+                .gateway_http
+                .post(&upstream_url)
+                .bearer_auth(access_token)
+                .header("user-agent", ANTIGRAVITY_CLIENT_VERSION)
+                .json(&json!({ "project": project }))
+                .send()
+                .await
+            {
+                Ok(upstream) => upstream,
+                Err(error) => {
+                    last_error = Some(upstream_network_error(AgentProvider::Gemini, error));
+                    if attempts_used >= MAX_UPSTREAM_ATTEMPTS {
+                        if claimed_probe {
+                            release_probe(state, candidate.id).await?;
+                        }
+                        break 'candidates;
+                    }
+                    let retry_same = should_retry_same_candidate(
+                        attempts_used,
+                        candidate_attempts,
+                        candidate_index,
+                        candidate_count,
+                    );
+                    if !retry_same && claimed_probe {
+                        release_probe(state, candidate.id).await?;
+                    }
+                    let delay = retry_delay(attempts_used, None);
+                    tokio::time::sleep(delay).await;
+                    if retry_same {
+                        continue;
+                    }
+                    continue 'candidates;
                 }
-                last_error = Some(upstream_network_error(AgentProvider::Gemini, error));
-                continue;
-            }
-        };
-        match upstream_disposition(upstream.status()) {
-            UpstreamDisposition::RateLimit => {
-                mark_rate_limited(&state, candidate.id).await?;
-                saw_rate_limit = true;
-                continue;
-            }
-            UpstreamDisposition::Reauthorize => {
-                mark_reauth_required(&state, candidate.id).await?;
-                saw_reauthorization = true;
-                continue;
-            }
-            UpstreamDisposition::Return if !upstream.status().is_success() => {
-                if claimed_probe {
-                    release_probe(&state, candidate.id).await?;
+            };
+            match gemini_upstream_disposition(upstream.status()) {
+                UpstreamDisposition::RateLimit => {
+                    mark_rate_limited(state, candidate.id).await?;
+                    saw_rate_limit = true;
+                    continue 'candidates;
                 }
-                last_error = Some(ApiError::Provider(format!(
-                    "Google model discovery returned HTTP {}.",
-                    upstream.status()
-                )));
-                continue;
+                UpstreamDisposition::Reauthorize => {
+                    mark_reauth_required(state, candidate.id).await?;
+                    saw_reauthorization = true;
+                    continue 'candidates;
+                }
+                UpstreamDisposition::RetryTransient => {
+                    last_error = Some(ApiError::Provider(format!(
+                        "Google model discovery returned HTTP {} after {attempts_used} attempts.",
+                        upstream.status()
+                    )));
+                    if attempts_used >= MAX_UPSTREAM_ATTEMPTS {
+                        if claimed_probe {
+                            release_probe(state, candidate.id).await?;
+                        }
+                        break 'candidates;
+                    }
+                    let retry_same = should_retry_same_candidate(
+                        attempts_used,
+                        candidate_attempts,
+                        candidate_index,
+                        candidate_count,
+                    );
+                    if !retry_same && claimed_probe {
+                        release_probe(state, candidate.id).await?;
+                    }
+                    let delay = retry_delay(attempts_used, Some(upstream.headers()));
+                    tokio::time::sleep(delay).await;
+                    if retry_same {
+                        continue;
+                    }
+                    continue 'candidates;
+                }
+                UpstreamDisposition::NextPool | UpstreamDisposition::Return => {
+                    if !upstream.status().is_success() {
+                        if upstream.status() == StatusCode::FORBIDDEN
+                            && gemini_response_requires_verification(&mut upstream).await
+                        {
+                            if crate::connections::mark_gemini_verification_required(
+                                state,
+                                candidate.id,
+                                access_token,
+                            )
+                            .await?
+                            {
+                                saw_reauthorization = true;
+                            } else if claimed_probe {
+                                release_probe(state, candidate.id).await?;
+                            }
+                            continue 'candidates;
+                        }
+                        if claimed_probe {
+                            release_probe(state, candidate.id).await?;
+                        }
+                        last_error = Some(ApiError::Provider(format!(
+                            "Google model discovery returned HTTP {}.",
+                            upstream.status()
+                        )));
+                        continue 'candidates;
+                    }
+                }
             }
-            UpstreamDisposition::Return => {}
+            let payload = upstream.json::<Value>().await.map_err(|_| {
+                ApiError::Provider("Google returned an invalid Gemini model catalogue.".to_owned())
+            })?;
+            mark_active(state, candidate.id).await?;
+            return Ok(Json(gemini_model_catalogue(&payload)));
         }
-        let payload = upstream.json::<Value>().await.map_err(|_| {
-            ApiError::Provider("Google returned an invalid Gemini model catalogue.".to_owned())
-        })?;
-        mark_active(&state, candidate.id).await?;
-        return Ok(Json(gemini_model_catalogue(&payload)));
     }
 
     if saw_rate_limit {
         Err(ApiError::RateLimited)
     } else if saw_reauthorization {
-        Err(ApiError::Provider(
-            "Every accessible pool for this provider needs to reconnect.".to_owned(),
-        ))
+        Err(reauthorization_error(selection))
     } else {
         Err(last_error.unwrap_or(ApiError::Forbidden))
     }
@@ -558,10 +1646,6 @@ impl GeminiOperation {
             Self::StreamGenerate => "/v1internal:streamGenerateContent?alt=sse",
             Self::CountTokens => "/v1internal:countTokens",
         }
-    }
-
-    fn records_usage(self) -> bool {
-        !matches!(self, Self::CountTokens)
     }
 
     fn streams(self) -> bool {
@@ -612,16 +1696,30 @@ async fn gemini_proxy_request(
     body: Bytes,
 ) -> Result<Response, ApiError> {
     let authorized = authorize_gateway_key(state, request_headers).await?;
-    let candidates =
-        connected_provider_candidates(state, authorized.user_id, AgentProvider::Gemini).await?;
+    gemini_proxy_request_for_user(state, authorized.into(), model, operation, body).await
+}
+
+async fn gemini_proxy_request_for_user(
+    state: &AppState,
+    selection: GatewaySelection,
+    model: &str,
+    operation: GeminiOperation,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let candidates = selected_provider_candidates(state, selection, AgentProvider::Gemini).await?;
     let request_body: Value = serde_json::from_slice(&body)
         .map_err(|_| ApiError::Validation("The Gemini request body must be valid JSON."))?;
     let mut saw_rate_limit = false;
     let mut saw_reauthorization = false;
-    let mut saw_share_exhausted = false;
     let mut last_error = None;
+    let mut last_pool_response = None;
+    let candidate_count = candidates.len();
+    let mut attempts_used = 0;
 
-    for candidate in candidates {
+    'candidates: for (candidate_index, candidate) in candidates.into_iter().enumerate() {
+        if attempts_used >= MAX_UPSTREAM_ATTEMPTS {
+            break;
+        }
         let claimed_probe = match claim_candidate(state, &candidate).await {
             Ok(Some(claimed_probe)) => claimed_probe,
             Ok(None) => {
@@ -672,79 +1770,155 @@ async fn gemini_proxy_request(
             continue;
         };
         let project = current_gemini_project(state, access_token, project).await;
-        if operation.records_usage()
-            && !pool_share::allow_gateway_request(
-                state,
-                candidate.id,
-                authorized.user_id,
-                AgentProvider::Gemini,
-            )
-            .await
-        {
-            if claimed_probe {
-                release_probe(state, candidate.id).await?;
-            }
-            saw_share_exhausted = true;
-            continue;
-        }
-
         let upstream_body = gemini_code_assist_request(model, &project, operation, &request_body);
         let upstream_url = format!(
             "{}{}",
             state.config.gemini_code_assist_url.trim_end_matches('/'),
             operation.path()
         );
-        let upstream = match state
-            .gateway_http
-            .post(upstream_url)
-            .bearer_auth(access_token)
-            .header("user-agent", ANTIGRAVITY_CLIENT_VERSION)
-            .header("content-type", "application/json")
-            .json(&upstream_body)
-            .send()
-            .await
-        {
-            Ok(upstream) => upstream,
-            Err(error) => {
-                if claimed_probe {
-                    release_probe(state, candidate.id).await?;
+        let mut candidate_attempts = 0;
+        loop {
+            attempts_used += 1;
+            candidate_attempts += 1;
+            let upstream = match state
+                .gateway_http
+                .post(&upstream_url)
+                .bearer_auth(access_token)
+                .header("user-agent", ANTIGRAVITY_CLIENT_VERSION)
+                .header("content-type", "application/json")
+                .json(&upstream_body)
+                .send()
+                .await
+            {
+                Ok(upstream) => upstream,
+                Err(error) => {
+                    last_error = Some(upstream_network_error(AgentProvider::Gemini, error));
+                    if attempts_used >= MAX_UPSTREAM_ATTEMPTS {
+                        if claimed_probe {
+                            release_probe(state, candidate.id).await?;
+                        }
+                        break 'candidates;
+                    }
+                    let retry_same = should_retry_same_candidate(
+                        attempts_used,
+                        candidate_attempts,
+                        candidate_index,
+                        candidate_count,
+                    );
+                    if !retry_same && claimed_probe {
+                        release_probe(state, candidate.id).await?;
+                    }
+                    let delay = retry_delay(attempts_used, None);
+                    eprintln!(
+                        "Gemini gateway attempt {attempts_used}/{MAX_UPSTREAM_ATTEMPTS} failed before a response; retrying in {} ms",
+                        delay.as_millis()
+                    );
+                    tokio::time::sleep(delay).await;
+                    if retry_same {
+                        continue;
+                    }
+                    continue 'candidates;
                 }
-                last_error = Some(upstream_network_error(AgentProvider::Gemini, error));
-                continue;
+            };
+            match gemini_upstream_disposition(upstream.status()) {
+                UpstreamDisposition::RateLimit => {
+                    mark_rate_limited(state, candidate.id).await?;
+                    saw_rate_limit = true;
+                    continue 'candidates;
+                }
+                UpstreamDisposition::Reauthorize => {
+                    mark_reauth_required(state, candidate.id).await?;
+                    saw_reauthorization = true;
+                    continue 'candidates;
+                }
+                UpstreamDisposition::NextPool => {
+                    let (verification_required, forwarded) =
+                        inspect_gemini_forbidden_response(upstream).await?;
+                    if verification_required {
+                        if crate::connections::mark_gemini_verification_required(
+                            state,
+                            candidate.id,
+                            access_token,
+                        )
+                        .await?
+                        {
+                            saw_reauthorization = true;
+                        } else if claimed_probe {
+                            release_probe(state, candidate.id).await?;
+                        }
+                    } else {
+                        if claimed_probe {
+                            release_probe(state, candidate.id).await?;
+                        }
+                        last_pool_response = Some(forwarded);
+                    }
+                    continue 'candidates;
+                }
+                UpstreamDisposition::RetryTransient => {
+                    eprintln!(
+                        "Gemini gateway attempt {attempts_used}/{MAX_UPSTREAM_ATTEMPTS} returned HTTP {}",
+                        upstream.status()
+                    );
+                    if attempts_used >= MAX_UPSTREAM_ATTEMPTS {
+                        if claimed_probe {
+                            release_probe(state, candidate.id).await?;
+                        }
+                        return gemini_upstream_response(
+                            upstream,
+                            operation,
+                            selection.connection_id.is_some(),
+                        )
+                        .await;
+                    }
+                    let retry_same = should_retry_same_candidate(
+                        attempts_used,
+                        candidate_attempts,
+                        candidate_index,
+                        candidate_count,
+                    );
+                    if !retry_same && claimed_probe {
+                        release_probe(state, candidate.id).await?;
+                    }
+                    let delay = retry_delay(attempts_used, Some(upstream.headers()));
+                    eprintln!("Gemini gateway retry scheduled in {} ms", delay.as_millis());
+                    tokio::time::sleep(delay).await;
+                    if retry_same {
+                        continue;
+                    }
+                    continue 'candidates;
+                }
+                UpstreamDisposition::Return => {}
             }
-        };
-        match upstream_disposition(upstream.status()) {
-            UpstreamDisposition::RateLimit => {
-                mark_rate_limited(state, candidate.id).await?;
-                saw_rate_limit = true;
-                continue;
-            }
-            UpstreamDisposition::Reauthorize => {
-                mark_reauth_required(state, candidate.id).await?;
-                saw_reauthorization = true;
-                continue;
-            }
-            UpstreamDisposition::Return => {}
+            mark_active(state, candidate.id).await?;
+            let usage_event = if upstream.status().is_success()
+                && !matches!(operation, GeminiOperation::CountTokens)
+            {
+                organization_usage_event(
+                    state,
+                    selection,
+                    candidate.id,
+                    AgentProvider::Gemini,
+                    Some(model.trim_start_matches("models/")),
+                )
+            } else {
+                None
+            };
+            return gemini_upstream_response_with_usage(
+                upstream,
+                operation,
+                selection.connection_id.is_some(),
+                usage_event,
+            )
+            .await;
         }
-        mark_active(state, candidate.id).await?;
-        return gemini_upstream_response(
-            state.clone(),
-            candidate.id,
-            authorized.user_id,
-            upstream,
-            operation,
-        )
-        .await;
     }
 
-    if saw_share_exhausted {
-        Err(ApiError::ShareExhausted)
-    } else if saw_rate_limit {
+    if saw_rate_limit {
         Err(ApiError::RateLimited)
     } else if saw_reauthorization {
-        Err(ApiError::Provider(
-            "Every accessible pool for this provider needs to reconnect.".to_owned(),
-        ))
+        Err(reauthorization_error(selection))
+    } else if let Some(response) = last_pool_response {
+        Ok(response)
     } else {
         Err(last_error.unwrap_or(ApiError::Forbidden))
     }
@@ -850,11 +2024,18 @@ fn unwrap_gemini_response(mut wrapper: Value) -> Value {
 }
 
 async fn gemini_upstream_response(
-    state: AppState,
-    connection_id: Uuid,
-    user_id: Uuid,
     upstream: reqwest::Response,
     operation: GeminiOperation,
+    cancel_on_disconnect: bool,
+) -> Result<Response, ApiError> {
+    gemini_upstream_response_with_usage(upstream, operation, cancel_on_disconnect, None).await
+}
+
+async fn gemini_upstream_response_with_usage(
+    upstream: reqwest::Response,
+    operation: GeminiOperation,
+    cancel_on_disconnect: bool,
+    usage_event: Option<OrganizationUsageEvent>,
 ) -> Result<Response, ApiError> {
     let status = upstream.status();
     let headers = upstream.headers().clone();
@@ -874,10 +2055,15 @@ async fn gemini_upstream_response(
             ApiError::Provider("Google returned an invalid Gemini response.".to_owned())
         })?;
         let payload = unwrap_gemini_response(wrapper);
-        if operation.records_usage()
-            && let Some(counts) = usage::tokens_from_value(&payload)
-        {
-            usage::record_event(&state, connection_id, user_id, counts).await;
+        if let Some(event) = usage_event {
+            let mut observer = UsageObserver::new(AgentProvider::Gemini, false);
+            observer.read_value(&payload);
+            if observer.completed {
+                let usage = observer.usage.has_tokens().then_some(observer.usage);
+                record_organization_usage(&event, usage)
+                    .await
+                    .map_err(database_error)?;
+            }
         }
         return response
             .header(header::CONTENT_TYPE, "application/json")
@@ -893,13 +2079,27 @@ async fn gemini_upstream_response(
 
         let mut stream = upstream.bytes_stream();
         let mut transformer = GeminiSseTransformer::default();
-        let mut extractor = usage::UsageExtractor::default();
+        let mut usage_observer = usage_event
+            .as_ref()
+            .map(|_| UsageObserver::new(AgentProvider::Gemini, true));
         let mut client_gone = false;
-        while let Some(item) = stream.next().await {
+        let mut complete = false;
+        loop {
+            let item = tokio::select! {
+                biased;
+                _ = tx.closed(), if cancel_on_disconnect => break,
+                item = stream.next() => item,
+            };
+            let Some(item) = item else {
+                complete = true;
+                break;
+            };
             match item {
                 Ok(bytes) => {
+                    if let Some(observer) = usage_observer.as_mut() {
+                        observer.push(&bytes);
+                    }
                     let transformed = transformer.push(&bytes);
-                    extractor.push(&transformed);
                     if !transformed.is_empty()
                         && !client_gone
                         && tx.send(Ok(transformed)).await.is_err()
@@ -916,13 +2116,18 @@ async fn gemini_upstream_response(
             }
         }
         let tail = transformer.finish();
-        extractor.push(&tail);
-        if !tail.is_empty() && !client_gone {
-            let _ = tx.send(Ok(tail)).await;
+        if !tail.is_empty() && !client_gone && tx.send(Ok(tail)).await.is_err() {
+            client_gone = true;
         }
-        drop(tx);
-        if let Some(counts) = extractor.finish() {
-            usage::record_event(&state, connection_id, user_id, counts).await;
+        if complete
+            && !client_gone
+            && let (Some(event), Some(observer)) = (usage_event, usage_observer)
+        {
+            let (provider_complete, usage) = observer.finish_with_completion();
+            if provider_complete && let Err(error) = record_organization_usage(&event, usage).await
+            {
+                eprintln!("organization usage insert failed: {error}");
+            }
         }
     });
     response
@@ -987,15 +2192,48 @@ async fn proxy_request(
     body: Bytes,
 ) -> Result<Response, ApiError> {
     let authorized = authorize_gateway_key(state, request_headers).await?;
-    let candidates =
-        connected_provider_candidates(state, authorized.user_id, expected_provider).await?;
-    let upstream_url = append_query(upstream_url, original_uri.query());
+    proxy_request_for_user(
+        state,
+        authorized.into(),
+        GatewayUpstream {
+            provider: expected_provider,
+            url: upstream_url,
+        },
+        method,
+        original_uri,
+        request_headers,
+        body,
+    )
+    .await
+}
+
+struct GatewayUpstream<'a> {
+    provider: AgentProvider,
+    url: &'a str,
+}
+
+async fn proxy_request_for_user(
+    state: &AppState,
+    selection: GatewaySelection,
+    upstream: GatewayUpstream<'_>,
+    method: Method,
+    original_uri: &axum::http::Uri,
+    request_headers: &HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let expected_provider = upstream.provider;
+    let candidates = selected_provider_candidates(state, selection, expected_provider).await?;
+    let upstream_url = append_query(upstream.url, original_uri.query());
     let mut saw_rate_limit = false;
     let mut saw_reauthorization = false;
-    let mut saw_share_exhausted = false;
     let mut last_error = None;
+    let candidate_count = candidates.len();
+    let mut attempts_used = 0;
 
-    for candidate in candidates {
+    'candidates: for (candidate_index, candidate) in candidates.into_iter().enumerate() {
+        if attempts_used >= MAX_UPSTREAM_ATTEMPTS {
+            break;
+        }
         let claimed_probe = match claim_candidate(state, &candidate).await {
             Ok(Some(claimed_probe)) => claimed_probe,
             Ok(None) => {
@@ -1035,126 +2273,177 @@ async fn proxy_request(
                 continue;
             }
         };
-        let record_usage = method != Method::GET && !upstream_url.contains("count_tokens");
-        if record_usage
-            && !pool_share::allow_gateway_request(
-                state,
-                candidate.id,
-                authorized.user_id,
-                expected_provider,
-            )
-            .await
-        {
-            if claimed_probe {
-                release_probe(state, candidate.id).await?;
-            }
-            saw_share_exhausted = true;
-            continue;
-        }
+        let mut candidate_attempts = 0;
+        loop {
+            attempts_used += 1;
+            candidate_attempts += 1;
+            let mut request = state
+                .gateway_http
+                .request(method.clone(), &upstream_url)
+                .bearer_auth(access_token)
+                .body(body.clone());
 
-        let mut request = state
-            .gateway_http
-            .request(method.clone(), &upstream_url)
-            .bearer_auth(access_token)
-            .body(body.clone());
-
-        for (name, value) in request_headers {
-            if should_forward_request_header(name) {
-                request = request.header(name, value);
-            }
-        }
-        request = match expected_provider {
-            AgentProvider::Chatgpt => {
-                let mut request = request
-                    .header("originator", "codex_cli_rs")
-                    .header("user-agent", "codex_cli_rs/0.153.4");
-                if let Some(account_id) = chatgpt_account_id(&token) {
-                    request = request.header("chatgpt-account-id", account_id);
+            for (name, value) in request_headers {
+                if should_forward_request_header(name) {
+                    request = request.header(name, value);
                 }
-                request
             }
-            AgentProvider::Claude => {
-                let version = request_headers
-                    .get("anthropic-version")
-                    .cloned()
-                    .unwrap_or_else(|| HeaderValue::from_static("2023-06-01"));
-                request
-                    .header("anthropic-version", version)
-                    .header("anthropic-beta", merged_anthropic_beta(request_headers))
-            }
-            AgentProvider::Gemini => request,
-            AgentProvider::Deepseek => request,
-            AgentProvider::Grok => {
-                let grok_headers = grok_proxy_headers(
-                    &state.config.grok_client_version,
-                    &body,
-                    method != Method::GET,
-                );
-                request.headers(grok_headers)
-            }
-        };
-
-        let upstream = match request.send().await {
-            Ok(upstream) => upstream,
-            Err(error) => {
-                if claimed_probe {
-                    release_probe(state, candidate.id).await?;
+            request = match expected_provider {
+                AgentProvider::Chatgpt => {
+                    let mut request = request.header("originator", "codex_cli_rs").header(
+                        "user-agent",
+                        format!("codex_cli_rs/{}", state.config.codex_client_version),
+                    );
+                    if let Some(account_id) = chatgpt_account_id(&token) {
+                        request = request.header("chatgpt-account-id", account_id);
+                    }
+                    request
                 }
-                last_error = Some(upstream_network_error(expected_provider, error));
-                continue;
+                AgentProvider::Claude => {
+                    let version = request_headers
+                        .get("anthropic-version")
+                        .cloned()
+                        .unwrap_or_else(|| HeaderValue::from_static("2023-06-01"));
+                    request
+                        .header("anthropic-version", version)
+                        .header("anthropic-beta", merged_anthropic_beta(request_headers))
+                        .header(
+                            "user-agent",
+                            format!(
+                                "claude-cli/{} (external, sdk-cli)",
+                                state.config.claude_client_version
+                            ),
+                        )
+                        .header("x-app", "cli")
+                        .header("anthropic-dangerous-direct-browser-access", "true")
+                }
+                AgentProvider::Gemini => request,
+                AgentProvider::Deepseek => request,
+                AgentProvider::Grok => {
+                    let grok_headers = grok_proxy_headers(
+                        &state.config.grok_client_version,
+                        &body,
+                        method != Method::GET,
+                    );
+                    request.headers(grok_headers)
+                }
+            };
+
+            let upstream = match request.send().await {
+                Ok(upstream) => upstream,
+                Err(error) => {
+                    last_error = Some(upstream_network_error(expected_provider, error));
+                    if attempts_used >= MAX_UPSTREAM_ATTEMPTS {
+                        if claimed_probe {
+                            release_probe(state, candidate.id).await?;
+                        }
+                        break 'candidates;
+                    }
+                    let retry_same = should_retry_same_candidate(
+                        attempts_used,
+                        candidate_attempts,
+                        candidate_index,
+                        candidate_count,
+                    );
+                    if !retry_same && claimed_probe {
+                        release_probe(state, candidate.id).await?;
+                    }
+                    let delay = retry_delay(attempts_used, None);
+                    eprintln!(
+                        "{expected_provider} gateway attempt {attempts_used}/{MAX_UPSTREAM_ATTEMPTS} failed before a response; retrying in {} ms",
+                        delay.as_millis()
+                    );
+                    tokio::time::sleep(delay).await;
+                    if retry_same {
+                        continue;
+                    }
+                    continue 'candidates;
+                }
+            };
+            let disposition = if expected_provider == AgentProvider::Grok
+                && upstream.status() == StatusCode::FORBIDDEN
+            {
+                UpstreamDisposition::Reauthorize
+            } else {
+                upstream_disposition(upstream.status())
+            };
+            match disposition {
+                UpstreamDisposition::RateLimit => {
+                    mark_rate_limited(state, candidate.id).await?;
+                    saw_rate_limit = true;
+                    continue 'candidates;
+                }
+                UpstreamDisposition::Reauthorize => {
+                    mark_reauth_required(state, candidate.id).await?;
+                    saw_reauthorization = true;
+                    continue 'candidates;
+                }
+                UpstreamDisposition::RetryTransient => {
+                    eprintln!(
+                        "{expected_provider} gateway attempt {attempts_used}/{MAX_UPSTREAM_ATTEMPTS} returned HTTP {}",
+                        upstream.status()
+                    );
+                    if attempts_used >= MAX_UPSTREAM_ATTEMPTS {
+                        if claimed_probe {
+                            release_probe(state, candidate.id).await?;
+                        }
+                        return upstream_response(upstream).await;
+                    }
+                    let retry_same = should_retry_same_candidate(
+                        attempts_used,
+                        candidate_attempts,
+                        candidate_index,
+                        candidate_count,
+                    );
+                    if !retry_same && claimed_probe {
+                        release_probe(state, candidate.id).await?;
+                    }
+                    let delay = retry_delay(attempts_used, Some(upstream.headers()));
+                    eprintln!(
+                        "{expected_provider} gateway retry scheduled in {} ms",
+                        delay.as_millis()
+                    );
+                    tokio::time::sleep(delay).await;
+                    if retry_same {
+                        continue;
+                    }
+                    continue 'candidates;
+                }
+                UpstreamDisposition::NextPool => {
+                    unreachable!("only Gemini classifies an upstream response as pool-specific")
+                }
+                UpstreamDisposition::Return => {}
             }
-        };
-        let disposition = if expected_provider == AgentProvider::Grok
-            && upstream.status() == StatusCode::FORBIDDEN
-        {
-            UpstreamDisposition::Reauthorize
-        } else {
-            upstream_disposition(upstream.status())
-        };
-        match disposition {
-            UpstreamDisposition::RateLimit => {
-                mark_rate_limited(state, candidate.id).await?;
-                saw_rate_limit = true;
-                continue;
-            }
-            UpstreamDisposition::Reauthorize => {
-                mark_reauth_required(state, candidate.id).await?;
-                saw_reauthorization = true;
-                continue;
-            }
-            UpstreamDisposition::Return => {}
+            mark_active(state, candidate.id).await?;
+            let usage_event = if method == Method::POST
+                && upstream.url().as_str() != CLAUDE_COUNT_TOKENS_URL
+                && upstream.status().is_success()
+            {
+                let requested_model = request_model(&body);
+                organization_usage_event(
+                    state,
+                    selection,
+                    candidate.id,
+                    expected_provider,
+                    requested_model.as_deref(),
+                )
+            } else {
+                None
+            };
+            return upstream_response_with_usage(upstream, usage_event).await;
         }
-        mark_active(state, candidate.id).await?;
-        return upstream_response(
-            state.clone(),
-            candidate.id,
-            authorized.user_id,
-            upstream,
-            record_usage,
-        )
-        .await;
     }
 
-    if saw_share_exhausted {
-        Err(ApiError::ShareExhausted)
-    } else if saw_rate_limit {
+    if saw_rate_limit {
         Err(ApiError::RateLimited)
     } else if saw_reauthorization {
-        Err(ApiError::Provider(
-            "Every accessible pool for this provider needs to reconnect.".to_owned(),
-        ))
+        Err(reauthorization_error(selection))
     } else {
         Err(last_error.unwrap_or(ApiError::Forbidden))
     }
 }
 
-async fn upstream_response(
-    state: AppState,
-    connection_id: Uuid,
-    user_id: Uuid,
-    upstream: reqwest::Response,
-    record_usage: bool,
-) -> Result<Response, ApiError> {
+async fn upstream_response(upstream: reqwest::Response) -> Result<Response, ApiError> {
     let status = upstream.status();
     let headers = upstream.headers().clone();
     let mut response = Response::builder().status(status);
@@ -1163,48 +2452,128 @@ async fn upstream_response(
             response = response.header(name, value);
         }
     }
-    if !record_usage {
-        return response
-            .body(Body::from_stream(upstream.bytes_stream()))
-            .map_err(|error| {
-                eprintln!("gateway response construction failed: {error}");
-                ApiError::Internal
-            });
+    response
+        .body(Body::from_stream(upstream.bytes_stream()))
+        .map_err(|error| {
+            eprintln!("gateway response construction failed: {error}");
+            ApiError::Internal
+        })
+}
+
+#[derive(Clone)]
+struct OrganizationUsageEvent {
+    pool: sqlx::PgPool,
+    organization_id: Uuid,
+    user_id: Uuid,
+    connection_id: Uuid,
+    provider: AgentProvider,
+    model: Option<String>,
+}
+
+fn organization_usage_event(
+    state: &AppState,
+    selection: GatewaySelection,
+    connection_id: Uuid,
+    provider: AgentProvider,
+    model: Option<&str>,
+) -> Option<OrganizationUsageEvent> {
+    Some(OrganizationUsageEvent {
+        pool: state.pool.clone(),
+        organization_id: selection.organization_id?,
+        user_id: selection.user_id,
+        connection_id,
+        provider,
+        model: model.map(str::to_owned),
+    })
+}
+
+async fn record_organization_usage(
+    event: &OrganizationUsageEvent,
+    usage: Option<TokenUsage>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO organization_usage_events
+         (id, org_id, user_id, connection_id, provider, model,
+          input_tokens, output_tokens, cached_tokens)
+         VALUES ($1, $2, $3,
+                 (SELECT id FROM agent_connections WHERE id = $4 FOR KEY SHARE),
+                 $5, $6, $7, $8, $9)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(event.organization_id)
+    .bind(event.user_id)
+    .bind(event.connection_id)
+    .bind(event.provider.to_string())
+    .bind(&event.model)
+    .bind(usage.and_then(|value| value.input_tokens))
+    .bind(usage.and_then(|value| value.output_tokens))
+    .bind(usage.and_then(|value| value.cached_tokens))
+    .execute(&event.pool)
+    .await?;
+    Ok(())
+}
+
+fn request_model(body: &Bytes) -> Option<String> {
+    serde_json::from_slice::<Value>(body)
+        .ok()?
+        .get("model")?
+        .as_str()
+        .filter(|model| !model.is_empty())
+        .map(str::to_owned)
+}
+
+async fn upstream_response_with_usage(
+    upstream: reqwest::Response,
+    usage_event: Option<OrganizationUsageEvent>,
+) -> Result<Response, ApiError> {
+    let Some(event) = usage_event else {
+        return upstream_response(upstream).await;
+    };
+    let status = upstream.status();
+    let headers = upstream.headers().clone();
+    let sse = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("text/event-stream"));
+    let mut response = Response::builder().status(status);
+    for (name, value) in &headers {
+        if should_forward_response_header(name) {
+            response = response.header(name, value);
+        }
     }
 
-    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(32);
-    tokio::spawn(async move {
-        use futures_util::StreamExt;
-
-        let mut stream = upstream.bytes_stream();
-        let mut extractor = usage::UsageExtractor::default();
-        let mut client_gone = false;
-        while let Some(item) = stream.next().await {
-            match item {
-                Ok(bytes) => {
-                    extractor.push(&bytes);
-                    if !client_gone && tx.send(Ok(bytes)).await.is_err() {
-                        client_gone = true;
+    let provider = event.provider;
+    let observed_stream = stream::unfold(
+        (
+            upstream.bytes_stream(),
+            UsageObserver::new(provider, sse),
+            false,
+        ),
+        move |(mut bytes_stream, mut observer, failed)| {
+            let event = event.clone();
+            async move {
+                match bytes_stream.next().await {
+                    Some(Ok(bytes)) => {
+                        observer.push(&bytes);
+                        Some((Ok(bytes), (bytes_stream, observer, failed)))
                     }
-                }
-                Err(error) => {
-                    if !client_gone {
-                        let _ = tx.send(Err(std::io::Error::other(error))).await;
+                    Some(Err(error)) => Some((Err(error), (bytes_stream, observer, true))),
+                    None => {
+                        let (provider_complete, usage) = observer.finish_with_completion();
+                        if !failed
+                            && provider_complete
+                            && let Err(error) = record_organization_usage(&event, usage).await
+                        {
+                            eprintln!("organization usage insert failed: {error}");
+                        }
+                        None
                     }
-                    break;
                 }
             }
-        }
-        drop(tx);
-        if let Some(counts) = extractor.finish() {
-            usage::record_event(&state, connection_id, user_id, counts).await;
-        }
-    });
-
+        },
+    );
     response
-        .body(Body::from_stream(
-            tokio_stream::wrappers::ReceiverStream::new(rx),
-        ))
+        .body(Body::from_stream(observed_stream))
         .map_err(|error| {
             eprintln!("gateway response construction failed: {error}");
             ApiError::Internal
@@ -1228,7 +2597,7 @@ pub(crate) async fn authorize_gateway_key(
         .ok_or(ApiError::GatewayUnauthorized)?;
     let key_hash = hash_gateway_key(key);
     let authorized = sqlx::query_as::<_, AuthorizedGatewayKey>(
-        "SELECT id, user_id FROM gateway_keys
+        "SELECT id, user_id, organization_id FROM gateway_keys
          WHERE key_hash = $1 AND revoked_at IS NULL",
     )
     .bind(key_hash)
@@ -1256,21 +2625,68 @@ fn gateway_key_from_row(row: GatewayKeyRow) -> Result<GatewayKey, ApiError> {
 
 async fn connected_provider_ids(
     state: &AppState,
-    user_id: Uuid,
+    selection: GatewaySelection,
     provider: AgentProvider,
 ) -> Result<Vec<Uuid>, ApiError> {
-    Ok(connected_provider_candidates(state, user_id, provider)
-        .await?
+    let candidates = connected_provider_candidates(state, selection, provider).await?;
+    let ids: Vec<Uuid> = candidates
         .into_iter()
+        .filter(|candidate| candidate.availability_status != "reauth_required")
         .map(|candidate| candidate.id)
-        .collect())
+        .collect();
+    if ids.is_empty() {
+        return Err(ApiError::Forbidden);
+    }
+    Ok(ids)
 }
 
 async fn connected_provider_candidates(
     state: &AppState,
-    user_id: Uuid,
+    selection: GatewaySelection,
     provider: AgentProvider,
 ) -> Result<Vec<ProviderCandidate>, ApiError> {
+    if let Some(organization_id) = selection.organization_id {
+        let candidates = sqlx::query_as::<_, ProviderCandidate>(
+            "SELECT connections.id, connections.availability_status,
+                    connections.rate_limited_until
+             FROM organization_agents AS shares
+             JOIN agent_connections AS connections
+               ON connections.id = shares.connection_id
+              AND connections.user_id = shares.owner_user_id
+             JOIN organization_memberships AS members
+               ON members.org_id = shares.org_id
+              AND members.user_id = $2
+              AND members.status = 'accepted'
+             JOIN organization_memberships AS owners
+               ON owners.org_id = shares.org_id
+              AND owners.user_id = shares.owner_user_id
+              AND owners.status = 'accepted'
+             WHERE shares.org_id = $1
+               AND connections.provider = $3
+               AND connections.status = 'connected'
+             ORDER BY CASE
+                        WHEN connections.availability_status = 'half_open'
+                             AND connections.retry_claimed_at IS NULL THEN 0
+                        WHEN connections.availability_status = 'rate_limited'
+                             AND connections.rate_limited_until <= NOW() THEN 1
+                        WHEN connections.availability_status = 'active' THEN 2
+                        ELSE 3
+                      END,
+                      shares.created_at DESC,
+                      connections.id",
+        )
+        .bind(organization_id)
+        .bind(selection.user_id)
+        .bind(provider.to_string())
+        .fetch_all(&state.pool)
+        .await
+        .map_err(database_error)?;
+        if candidates.is_empty() {
+            return Err(ApiError::Forbidden);
+        }
+        return Ok(candidates);
+    }
+
     let candidates = sqlx::query_as::<_, ProviderCandidate>(
         "SELECT connections.id, connections.availability_status,
                 connections.rate_limited_until
@@ -1294,7 +2710,7 @@ async fn connected_provider_candidates(
                   COALESCE(requests.updated_at, connections.updated_at) DESC
         ",
     )
-    .bind(user_id)
+    .bind(selection.user_id)
     .bind(provider.to_string())
     .fetch_all(&state.pool)
     .await
@@ -1356,7 +2772,7 @@ async fn mark_rate_limited(state: &AppState, connection_id: Uuid) -> Result<(), 
         "UPDATE agent_connections
          SET availability_status = 'rate_limited', rate_limited_until = $2,
              retry_claimed_at = NULL, updated_at = NOW()
-         WHERE id = $1",
+         WHERE id = $1 AND availability_status <> 'reauth_required'",
     )
     .bind(connection_id)
     .bind(retry_at)
@@ -1387,7 +2803,7 @@ async fn mark_active(state: &AppState, connection_id: Uuid) -> Result<(), ApiErr
         "UPDATE agent_connections
          SET availability_status = 'active', rate_limited_until = NULL,
              retry_claimed_at = NULL, updated_at = NOW()
-         WHERE id = $1 AND availability_status <> 'active'",
+         WHERE id = $1 AND availability_status NOT IN ('active', 'reauth_required')",
     )
     .bind(connection_id)
     .execute(&state.pool)
@@ -1416,8 +2832,243 @@ fn upstream_disposition(status: StatusCode) -> UpstreamDisposition {
     match status {
         StatusCode::TOO_MANY_REQUESTS => UpstreamDisposition::RateLimit,
         StatusCode::UNAUTHORIZED => UpstreamDisposition::Reauthorize,
+        StatusCode::REQUEST_TIMEOUT
+        | StatusCode::INTERNAL_SERVER_ERROR
+        | StatusCode::BAD_GATEWAY
+        | StatusCode::SERVICE_UNAVAILABLE
+        | StatusCode::GATEWAY_TIMEOUT => UpstreamDisposition::RetryTransient,
         _ => UpstreamDisposition::Return,
     }
+}
+
+fn gemini_upstream_disposition(status: StatusCode) -> UpstreamDisposition {
+    if status == StatusCode::FORBIDDEN {
+        // Code Assist can reject one account or project while another pool can
+        // serve the same request. A 403 alone does not prove OAuth needs renewal.
+        UpstreamDisposition::NextPool
+    } else {
+        upstream_disposition(status)
+    }
+}
+
+const MAX_GEMINI_ERROR_INSPECTION_BYTES: usize = 64 * 1024;
+
+fn gemini_verification_challenge(body: &[u8]) -> bool {
+    let parsed = serde_json::from_slice::<Value>(body).ok();
+    let message = if let Some(payload) = parsed.as_ref() {
+        payload
+            .pointer("/error/message")
+            .or_else(|| payload.get("message"))
+            .and_then(Value::as_str)
+    } else {
+        std::str::from_utf8(body).ok()
+    };
+    message.is_some_and(|message| {
+        message
+            .to_ascii_lowercase()
+            .contains("verify your account to continue")
+    })
+}
+
+async fn gemini_error_prefix(
+    upstream: &mut reqwest::Response,
+) -> Result<(Vec<u8>, Option<Bytes>), reqwest::Error> {
+    let mut prefix = Vec::new();
+    while prefix.len() < MAX_GEMINI_ERROR_INSPECTION_BYTES {
+        let Some(chunk) = upstream.chunk().await? else {
+            break;
+        };
+        let take = chunk
+            .len()
+            .min(MAX_GEMINI_ERROR_INSPECTION_BYTES - prefix.len());
+        prefix.extend_from_slice(&chunk[..take]);
+        if take < chunk.len() {
+            return Ok((prefix, Some(chunk.slice(take..))));
+        }
+    }
+    Ok((prefix, None))
+}
+
+async fn gemini_response_requires_verification(upstream: &mut reqwest::Response) -> bool {
+    gemini_error_prefix(upstream)
+        .await
+        .is_ok_and(|(prefix, _)| gemini_verification_challenge(&prefix))
+}
+
+async fn inspect_gemini_forbidden_response(
+    mut upstream: reqwest::Response,
+) -> Result<(bool, Response), ApiError> {
+    let status = upstream.status();
+    let headers = upstream.headers().clone();
+    let (prefix, overflow) = gemini_error_prefix(&mut upstream)
+        .await
+        .map_err(|error| upstream_network_error(AgentProvider::Gemini, error))?;
+    let verification_required = gemini_verification_challenge(&prefix);
+    let mut response = Response::builder().status(status);
+    for (name, value) in &headers {
+        if should_forward_response_header(name) {
+            response = response.header(name, value);
+        }
+    }
+    let chunks = std::iter::once(Bytes::from(prefix)).chain(overflow);
+    let body = Body::from_stream(
+        stream::iter(chunks.map(Ok::<_, reqwest::Error>)).chain(upstream.bytes_stream()),
+    );
+    Ok((
+        verification_required,
+        response.body(body).map_err(|_| ApiError::Internal)?,
+    ))
+}
+
+/// A forced refresh checks that a newly rotated AGY token can discover models,
+/// count tokens and make a minimal generation request through Code Assist. A
+/// generic 403 is inconclusive; only Google's explicit account verification
+/// challenge means the owner must reconnect.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GeminiVerificationProbe {
+    Verified,
+    ReauthorizationRequired,
+    Inconclusive,
+}
+
+pub(crate) async fn probe_gemini_account_verification(
+    state: &AppState,
+    access_token: &str,
+    project: &str,
+) -> GeminiVerificationProbe {
+    let models_url = format!(
+        "{}/v1internal:fetchAvailableModels",
+        state.config.gemini_code_assist_url.trim_end_matches('/')
+    );
+    let Ok(mut models) = state
+        .gateway_http
+        .post(models_url)
+        .bearer_auth(access_token)
+        .header("user-agent", ANTIGRAVITY_CLIENT_VERSION)
+        .json(&json!({ "project": project }))
+        .send()
+        .await
+    else {
+        return GeminiVerificationProbe::Inconclusive;
+    };
+    if models.status() == StatusCode::FORBIDDEN {
+        return if gemini_response_requires_verification(&mut models).await {
+            GeminiVerificationProbe::ReauthorizationRequired
+        } else {
+            GeminiVerificationProbe::Inconclusive
+        };
+    }
+    if !models.status().is_success() {
+        return GeminiVerificationProbe::Inconclusive;
+    }
+    let Ok(catalogue) = models.json::<Value>().await else {
+        return GeminiVerificationProbe::Inconclusive;
+    };
+    let model = ANTIGRAVITY_MODELS
+        .iter()
+        .find(|model| {
+            catalogue
+                .pointer("/models")
+                .and_then(|models| models.get(**model))
+                .is_some()
+        })
+        .copied()
+        .unwrap_or(ANTIGRAVITY_MODELS[0]);
+    let count_url = format!(
+        "{}/v1internal:countTokens",
+        state.config.gemini_code_assist_url.trim_end_matches('/')
+    );
+    let body = gemini_code_assist_request(
+        model,
+        project,
+        GeminiOperation::CountTokens,
+        &json!({"contents": [{"role": "user", "parts": [{"text": "verify"}]}]}),
+    );
+    let Ok(mut count) = state
+        .gateway_http
+        .post(count_url)
+        .bearer_auth(access_token)
+        .header("user-agent", ANTIGRAVITY_CLIENT_VERSION)
+        .json(&body)
+        .send()
+        .await
+    else {
+        return GeminiVerificationProbe::Inconclusive;
+    };
+    if count.status() == StatusCode::FORBIDDEN
+        && gemini_response_requires_verification(&mut count).await
+    {
+        return GeminiVerificationProbe::ReauthorizationRequired;
+    }
+    if !count.status().is_success() {
+        return GeminiVerificationProbe::Inconclusive;
+    }
+    let generate_url = format!(
+        "{}/v1internal:generateContent",
+        state.config.gemini_code_assist_url.trim_end_matches('/')
+    );
+    let body = gemini_code_assist_request(
+        model,
+        project,
+        GeminiOperation::Generate,
+        &json!({
+            "contents": [{"role": "user", "parts": [{"text": "Reply OK"}]}],
+            "generationConfig": {"maxOutputTokens": 8}
+        }),
+    );
+    let Ok(mut generated) = state
+        .gateway_http
+        .post(generate_url)
+        .bearer_auth(access_token)
+        .header("user-agent", ANTIGRAVITY_CLIENT_VERSION)
+        .json(&body)
+        .send()
+        .await
+    else {
+        return GeminiVerificationProbe::Inconclusive;
+    };
+    if generated.status() == StatusCode::FORBIDDEN
+        && gemini_response_requires_verification(&mut generated).await
+    {
+        GeminiVerificationProbe::ReauthorizationRequired
+    } else if generated.status().is_success() {
+        GeminiVerificationProbe::Verified
+    } else {
+        GeminiVerificationProbe::Inconclusive
+    }
+}
+
+fn should_retry_same_candidate(
+    attempts_used: usize,
+    candidate_attempts: usize,
+    candidate_index: usize,
+    candidate_count: usize,
+) -> bool {
+    if attempts_used >= MAX_UPSTREAM_ATTEMPTS {
+        return false;
+    }
+    let remaining_candidates = candidate_count.saturating_sub(candidate_index + 1);
+    remaining_candidates == 0
+        || (candidate_attempts < MAX_SAME_CANDIDATE_ATTEMPTS
+            && MAX_UPSTREAM_ATTEMPTS - attempts_used > remaining_candidates)
+}
+
+fn retry_delay(retry_number: usize, headers: Option<&HeaderMap>) -> std::time::Duration {
+    let exponent = retry_number.saturating_sub(1).min(usize::BITS as usize - 1);
+    let base_ms = RETRY_BASE_DELAY_MS
+        .saturating_mul(1_u64 << exponent)
+        .min(RETRY_MAX_DELAY_MS);
+    let jitter_span = base_ms / 5;
+    let jittered_ms = (base_ms.saturating_sub(jitter_span)
+        + rand::thread_rng().next_u64() % (jitter_span.saturating_mul(2) + 1))
+        .min(RETRY_MAX_DELAY_MS);
+    let retry_after_ms = headers
+        .and_then(|headers| headers.get(header::RETRY_AFTER))
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(|seconds| seconds.saturating_mul(1_000).min(RETRY_MAX_DELAY_MS))
+        .unwrap_or_default();
+    std::time::Duration::from_millis(jittered_ms.max(retry_after_ms))
 }
 
 pub(crate) fn generate_gateway_key() -> String {
@@ -1526,18 +3177,20 @@ fn merged_anthropic_beta(headers: &HeaderMap) -> HeaderValue {
         .get("anthropic-beta")
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default();
-    let value = if existing
+    let mut parts: Vec<&str> = existing
         .split(',')
         .map(str::trim)
-        .any(|part| part == "oauth-2025-04-20")
-    {
-        existing.to_owned()
-    } else if existing.is_empty() {
-        "oauth-2025-04-20".to_owned()
-    } else {
-        format!("{existing},oauth-2025-04-20")
-    };
-    HeaderValue::from_str(&value).unwrap_or_else(|_| HeaderValue::from_static("oauth-2025-04-20"))
+        .filter(|part| !part.is_empty())
+        .collect();
+    if !parts.contains(&"claude-code-20250219") {
+        parts.push("claude-code-20250219");
+    }
+    if !parts.contains(&"oauth-2025-04-20") {
+        parts.push("oauth-2025-04-20");
+    }
+    let value = parts.join(",");
+    HeaderValue::from_str(&value)
+        .unwrap_or_else(|_| HeaderValue::from_static("claude-code-20250219,oauth-2025-04-20"))
 }
 
 pub(crate) fn chatgpt_account_id(token: &Value) -> Option<String> {
@@ -1575,20 +3228,166 @@ fn database_error(error: sqlx::Error) -> ApiError {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn gemini_verification_challenge_requires_an_explicit_provider_message() {
+        use super::gemini_verification_challenge;
+
+        assert!(gemini_verification_challenge(
+            br#"{"error":{"code":403,"message":"Verify your account to continue.","status":"PERMISSION_DENIED"}}"#
+        ));
+        assert!(gemini_verification_challenge(
+            b"Please verify your account to continue."
+        ));
+        assert!(!gemini_verification_challenge(
+            br#"{"error":{"message":"Project lacks model permission"},"debug":"Verify your account to continue."}"#
+        ));
+        assert!(!gemini_verification_challenge(
+            br#"{"error":{"status":"PERMISSION_DENIED"}}"#
+        ));
+    }
+
+    #[tokio::test]
+    async fn playground_gemini_disconnect_closes_upstream_without_waiting_for_next_chunk() {
+        use axum::{Router, routing::get};
+        use std::{sync::Arc, time::Duration};
+        use tokio::{
+            net::TcpListener,
+            sync::{Mutex, mpsc},
+        };
+        use tokio_stream::wrappers::ReceiverStream;
+
+        let (tx, rx) = mpsc::channel::<Result<axum::body::Bytes, std::io::Error>>(1);
+        tx.send(Ok(axum::body::Bytes::from_static(
+            b"data: {\"response\":{\"candidates\":[]}}\n\n",
+        )))
+        .await
+        .unwrap();
+        let receiver = Arc::new(Mutex::new(Some(rx)));
+        let server = Router::new().route(
+            "/stream",
+            get(move || {
+                let receiver = receiver.clone();
+                async move {
+                    axum::body::Body::from_stream(ReceiverStream::new(
+                        receiver.lock().await.take().unwrap(),
+                    ))
+                }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/stream", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move { axum::serve(listener, server).await.unwrap() });
+        let upstream = reqwest::get(url).await.unwrap();
+        let response =
+            super::gemini_upstream_response(upstream, super::GeminiOperation::StreamGenerate, true)
+                .await
+                .unwrap();
+        drop(response);
+        tokio::time::timeout(Duration::from_secs(2), tx.closed())
+            .await
+            .expect("cancel must drop the upstream stream");
+        task.abort();
+    }
+
     use axum::{
         body::Bytes,
         http::{HeaderMap, HeaderValue},
     };
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-    use serde_json::json;
+    use serde_json::{Value, json};
     use uuid::Uuid;
 
+    use crate::AgentProvider;
+
     use super::{
-        GeminiOperation, GeminiSseTransformer, UpstreamDisposition, antigravity_model_id,
-        chatgpt_account_id, gemini_code_assist_request, gemini_model_catalogue, grok_proxy_headers,
-        hash_gateway_key, merged_anthropic_beta, parse_gemini_operation, rate_limit_cooldown,
+        GeminiOperation, GeminiSseTransformer, MAX_USAGE_PAYLOAD_BYTES, TokenUsage,
+        UpstreamDisposition, UsageObserver, antigravity_model_id, chatgpt_account_id,
+        default_claude_model_catalogue, default_openai_model_catalogue,
+        ensure_claude_billing_header, filter_current_live_model_catalogue,
+        filter_current_live_model_response, gemini_code_assist_request, gemini_model_catalogue,
+        gemini_upstream_disposition, grok_proxy_headers, hash_gateway_key, merged_anthropic_beta,
+        parse_claude_models_markdown, parse_gemini_operation, parse_openai_models_markdown,
+        rate_limit_cooldown, retry_delay, should_retry_same_candidate,
         strip_unsupported_codex_fields, unwrap_gemini_response, upstream_disposition,
     };
+
+    #[test]
+    fn usage_observer_reads_split_responses_event_without_counting_partial_streams() {
+        let mut observer = UsageObserver::new(AgentProvider::Chatgpt, true);
+        observer.push(
+            b"data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":12,",
+        );
+        observer.push(b"\"output_tokens\":7,\"input_tokens_details\":{\"cached_tokens\":3}}}}\n\n");
+        assert_eq!(
+            observer.finish_with_completion().1,
+            Some(TokenUsage {
+                input_tokens: Some(12),
+                output_tokens: Some(7),
+                cached_tokens: Some(3),
+            })
+        );
+
+        let mut incomplete = UsageObserver::new(AgentProvider::Chatgpt, true);
+        incomplete
+            .push(b"data: {\"type\":\"response.in_progress\",\"usage\":{\"input_tokens\":12}}\n\n");
+        assert_eq!(incomplete.finish_with_completion().1, None);
+    }
+
+    #[test]
+    fn usage_observer_includes_claude_cached_input_and_final_output() {
+        let mut observer = UsageObserver::new(AgentProvider::Claude, true);
+        observer.push(b"data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5,\"cache_read_input_tokens\":20,\"cache_creation_input_tokens\":10,\"output_tokens\":1}}}\n\n");
+        observer.push(b"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":8}}\n\n");
+        observer.push(b"data: {\"type\":\"message_stop\"}\n\n");
+        assert_eq!(
+            observer.finish_with_completion().1,
+            Some(TokenUsage {
+                input_tokens: Some(35),
+                output_tokens: Some(8),
+                cached_tokens: Some(20),
+            })
+        );
+    }
+
+    #[test]
+    fn usage_observer_reads_gemini_metadata_and_bounded_json() {
+        let mut observer = UsageObserver::new(AgentProvider::Gemini, true);
+        observer.push(b"data: {\"response\":{\"candidates\":[{\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":10,\"totalTokenCount\":18,\"candidatesTokenCount\":5,\"cachedContentTokenCount\":4}}}\n\n");
+        assert_eq!(
+            observer.finish_with_completion().1,
+            Some(TokenUsage {
+                input_tokens: Some(10),
+                output_tokens: Some(8),
+                cached_tokens: Some(4),
+            })
+        );
+
+        let mut oversized = UsageObserver::new(AgentProvider::Grok, false);
+        oversized.push(&vec![b'x'; MAX_USAGE_PAYLOAD_BYTES + 1]);
+        assert!(oversized.pending.is_empty());
+        assert_eq!(oversized.finish_with_completion().1, None);
+    }
+
+    #[test]
+    fn usage_observer_requires_provider_completion_not_just_stream_end() {
+        let mut failed_response = UsageObserver::new(AgentProvider::Chatgpt, true);
+        failed_response.push(b"data: {\"type\":\"response.incomplete\"}\n\ndata: [DONE]\n\n");
+        assert_eq!(failed_response.finish_with_completion(), (false, None));
+
+        let mut partial_gemini = UsageObserver::new(AgentProvider::Gemini, true);
+        partial_gemini
+            .push(b"data: {\"response\":{\"usageMetadata\":{\"promptTokenCount\":12}}}\n\n");
+        assert_eq!(partial_gemini.finish_with_completion(), (false, None));
+
+        let mut limited_claude = UsageObserver::new(AgentProvider::Claude, true);
+        limited_claude.push(b"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"max_tokens\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n");
+        assert_eq!(limited_claude.finish_with_completion(), (false, None));
+
+        let mut completed_chat = UsageObserver::new(AgentProvider::Deepseek, true);
+        completed_chat
+            .push(b"data: {\"choices\":[{\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n");
+        assert_eq!(completed_chat.finish_with_completion(), (true, None));
+    }
 
     #[test]
     fn gateway_key_hash_does_not_store_the_plaintext() {
@@ -1633,15 +3432,42 @@ mod tests {
             "anthropic-beta",
             HeaderValue::from_static("prompt-caching-2024-07-31"),
         );
-        assert_eq!(
-            merged_anthropic_beta(&headers),
-            "prompt-caching-2024-07-31,oauth-2025-04-20"
-        );
+        let merged = merged_anthropic_beta(&headers);
+        let text = merged.to_str().unwrap();
+        assert!(text.contains("prompt-caching-2024-07-31"));
+        assert!(text.contains("claude-code-20250219"));
+        assert!(text.contains("oauth-2025-04-20"));
+
         headers.insert(
             "anthropic-beta",
             HeaderValue::from_static("oauth-2025-04-20"),
         );
-        assert_eq!(merged_anthropic_beta(&headers), "oauth-2025-04-20");
+        let merged = merged_anthropic_beta(&headers);
+        let text = merged.to_str().unwrap();
+        assert!(text.contains("claude-code-20250219"));
+        assert!(text.contains("oauth-2025-04-20"));
+        assert_eq!(text.matches("oauth-2025-04-20").count(), 1);
+    }
+
+    #[test]
+    fn claude_billing_header_is_injected_into_system_prompt() {
+        let empty_body = Bytes::from_static(br#"{"model":"claude-opus-5","messages":[]}"#);
+        let with_billing = ensure_claude_billing_header(empty_body, "2.1.223");
+        let parsed: Value = serde_json::from_slice(&with_billing).unwrap();
+        let system_arr = parsed["system"].as_array().unwrap();
+        assert!(system_arr[0]["text"].as_str().unwrap().contains(
+            "x-anthropic-billing-header: cc_version=2.1.223.bd6; cc_entrypoint=sdk-cli;"
+        ));
+
+        let string_body = Bytes::from_static(
+            br#"{"model":"claude-opus-5","system":"You are helpful.","messages":[]}"#,
+        );
+        let with_billing = ensure_claude_billing_header(string_body, "2.1.223");
+        let parsed: Value = serde_json::from_slice(&with_billing).unwrap();
+        let system_str = parsed["system"].as_str().unwrap();
+        assert!(system_str.starts_with(
+            "x-anthropic-billing-header: cc_version=2.1.223.bd6; cc_entrypoint=sdk-cli;\n\nYou are helpful."
+        ));
     }
 
     #[test]
@@ -1678,6 +3504,72 @@ mod tests {
             upstream_disposition(axum::http::StatusCode::BAD_REQUEST),
             UpstreamDisposition::Return
         );
+    }
+
+    #[test]
+    fn gemini_forbidden_is_account_failover_without_changing_other_client_errors() {
+        use axum::http::StatusCode;
+
+        assert_eq!(
+            gemini_upstream_disposition(StatusCode::FORBIDDEN),
+            UpstreamDisposition::NextPool
+        );
+        assert_eq!(
+            upstream_disposition(StatusCode::FORBIDDEN),
+            UpstreamDisposition::Return
+        );
+        assert_eq!(
+            gemini_upstream_disposition(StatusCode::BAD_REQUEST),
+            UpstreamDisposition::Return
+        );
+        assert_eq!(
+            gemini_upstream_disposition(StatusCode::UNAUTHORIZED),
+            UpstreamDisposition::Reauthorize
+        );
+    }
+
+    #[test]
+    fn transient_upstream_statuses_are_retried_before_returning_to_the_client() {
+        for status in [
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            axum::http::StatusCode::BAD_GATEWAY,
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            axum::http::StatusCode::GATEWAY_TIMEOUT,
+        ] {
+            assert_eq!(
+                upstream_disposition(status),
+                UpstreamDisposition::RetryTransient
+            );
+        }
+    }
+
+    #[test]
+    fn transient_retries_preserve_attempts_for_remaining_candidates() {
+        assert!(should_retry_same_candidate(1, 1, 0, 3));
+        assert!(!should_retry_same_candidate(2, 2, 0, 3));
+        assert!(!should_retry_same_candidate(3, 1, 1, 3));
+        assert!(!should_retry_same_candidate(4, 1, 2, 3));
+
+        assert!(should_retry_same_candidate(1, 1, 0, 1));
+        assert!(should_retry_same_candidate(2, 2, 0, 1));
+        assert!(should_retry_same_candidate(3, 3, 0, 1));
+        assert!(!should_retry_same_candidate(4, 4, 0, 1));
+    }
+
+    #[test]
+    fn retry_backoff_is_bounded_and_honors_short_retry_after_values() {
+        let first = retry_delay(1, None);
+        assert!((400..=600).contains(&first.as_millis()));
+
+        let third = retry_delay(3, None);
+        assert!((1_600..=2_000).contains(&third.as_millis()));
+
+        let mut headers = HeaderMap::new();
+        headers.insert("retry-after", HeaderValue::from_static("1"));
+        assert!(retry_delay(1, Some(&headers)).as_millis() >= 1_000);
+        headers.insert("retry-after", HeaderValue::from_static("60"));
+        assert_eq!(retry_delay(1, Some(&headers)).as_millis(), 2_000);
     }
 
     #[test]
@@ -1794,5 +3686,852 @@ mod tests {
         let text = String::from_utf8(output.to_vec()).unwrap();
         assert!(!text.contains('\r'));
         assert!(text.ends_with("\n\n"));
+    }
+
+    #[test]
+    fn default_openai_model_catalogue_includes_current_rollout_models() {
+        let catalogue = default_openai_model_catalogue();
+        assert_eq!(catalogue["object"], "list");
+        let models = catalogue["data"].as_array().unwrap();
+        assert_eq!(models.len(), 6);
+        assert_eq!(models[0]["id"], "gpt-6-astra");
+        assert_eq!(models[1]["id"], "gpt-6-sol");
+        assert_eq!(models[2]["id"], "gpt-6-luna");
+        assert_eq!(models[3]["id"], "gpt-5.6-sol");
+        assert_eq!(models[4]["id"], "gpt-5.6-terra");
+        assert_eq!(models[5]["id"], "gpt-5.6-luna");
+    }
+
+    #[test]
+    fn default_claude_model_catalogue_includes_current_models_and_sonnet_effort() {
+        let catalogue = default_claude_model_catalogue();
+        assert_eq!(catalogue["object"], "list");
+        let models = catalogue["data"].as_array().unwrap();
+        assert_eq!(models.len(), 4);
+        assert_eq!(models[0]["id"], "claude-fable-5-1");
+        assert_eq!(models[0]["display_name"], "Claude Fable 5.1");
+        assert_eq!(models[0]["capabilities"]["effort"]["supported"], true);
+        assert_eq!(models[1]["id"], "claude-opus-5-5");
+        assert_eq!(models[1]["display_name"], "Claude Opus 5.5");
+        assert_eq!(models[1]["capabilities"]["effort"]["supported"], true);
+        assert_eq!(models[2]["id"], "claude-sonnet-5");
+        assert_eq!(models[2]["capabilities"]["effort"]["supported"], true);
+        assert_eq!(models[3]["id"], "claude-haiku-4-5-20251001");
+    }
+
+    #[test]
+    fn parse_claude_models_markdown_extracts_models_and_effort() {
+        let markdown = r#"
+## Compare models
+
+| Feature | Claude Fable 5.1 | Claude Opus 5.5 | Claude Sonnet 5 | Claude Haiku 4.5 |
+| :--- | :--- | :--- | :--- | :--- |
+| Claude API ID | `claude-fable-5-1` | `claude-opus-5-5` | `claude-sonnet-5` | `claude-haiku-4-5-20251001` |
+| [Default effort](https://platform.claude.com/effort) | `high` | `medium` | `high` | Not supported |
+| Claude API alias | `claude-fable-5-1` | `claude-opus-5-5` | `claude-sonnet-5` | `claude-haiku-4-5` |
+
+Legacy models (still available): [Claude Fable 5](https://platform.claude.com/docs/en/models/fable-5/overview), [Claude Opus 5](https://platform.claude.com/docs/en/models/opus-5/overview), [Claude Opus 4.8](https://platform.claude.com/docs/en/models/opus-4-8/overview).
+"#;
+        let parsed = parse_claude_models_markdown(markdown).unwrap();
+        assert_eq!(parsed["object"], "list");
+        let models = parsed["data"].as_array().unwrap();
+        assert_eq!(models[0]["id"], "claude-fable-5-1");
+        assert_eq!(models[0]["display_name"], "Claude Fable 5.1");
+        assert_eq!(models[0]["capabilities"]["effort"]["supported"], true);
+        assert_eq!(models[1]["id"], "claude-opus-5-5");
+        assert_eq!(models[1]["display_name"], "Claude Opus 5.5");
+        assert_eq!(models[1]["capabilities"]["effort"]["supported"], true);
+        assert_eq!(models[3]["id"], "claude-haiku-4-5-20251001");
+        assert!(models[3].get("capabilities").is_none());
+        assert_eq!(models.len(), 4);
+    }
+
+    #[test]
+    fn parse_openai_models_markdown_keeps_recommended_and_rollout_models() {
+        let markdown = r#"
+## Recommended models
+
+GPT-5.6 Sol, GPT-5.6 Terra, and GPT-5.6 Luna remain available during the rollout.
+
+<ModelDetails
+  name="gpt-6-astra"
+  slug="gpt-6-astra"
+/>
+<ModelDetails
+  name="gpt-6-sol"
+  slug="gpt-6-sol"
+/>
+<ModelDetails
+  name="gpt-6-luna"
+  slug="gpt-6-luna"
+/>
+
+## Other models
+
+<ModelDetails name="gpt-5.5" slug="gpt-5.5" />
+
+## Deprecated Codex models
+
+The `gpt-5.4` and `gpt-5.3-codex` models have retired.
+"#;
+        let parsed = parse_openai_models_markdown(markdown).unwrap();
+        assert_eq!(parsed["object"], "list");
+        let models = parsed["data"].as_array().unwrap();
+        assert_eq!(models.len(), 6);
+        assert_eq!(models[0]["id"], "gpt-6-astra");
+        assert_eq!(models[0]["name"], "GPT-6 Astra");
+        assert_eq!(models[1]["id"], "gpt-6-sol");
+        assert_eq!(models[2]["id"], "gpt-6-luna");
+        assert_eq!(models[3]["id"], "gpt-5.6-sol");
+        assert_eq!(models[4]["id"], "gpt-5.6-terra");
+        assert_eq!(models[5]["id"], "gpt-5.6-luna");
+        assert!(
+            parse_openai_models_markdown(
+                "## Browse our full catalog of models\n- [GPT-5.5](/api/docs/models/gpt-5.5.md)"
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn live_deepseek_and_grok_catalogues_drop_retired_aliases() {
+        let mut deepseek = json!({"data": [
+            {"id": "deepseek-flash"},
+            {"id": "deepseek-v4-flash"},
+            {"id": "deepseek-v4-pro"}
+        ]});
+        filter_current_live_model_catalogue(&mut deepseek, AgentProvider::Deepseek).unwrap();
+        assert_eq!(deepseek["data"].as_array().unwrap().len(), 2);
+        assert_eq!(deepseek["data"][0]["id"], "deepseek-flash");
+        assert_eq!(deepseek["data"][1]["id"], "deepseek-v4-pro");
+
+        let mut grok = json!({"data": [
+            {"id": "grok-4.7"},
+            {"id": "grok-4.2"},
+            {"id": "grok-build"}
+        ]});
+        filter_current_live_model_catalogue(&mut grok, AgentProvider::Grok).unwrap();
+        assert_eq!(grok["data"].as_array().unwrap().len(), 1);
+        assert_eq!(grok["data"][0]["id"], "grok-4.7");
+    }
+
+    #[tokio::test]
+    async fn filtered_live_catalogue_keeps_upstream_status_and_non_body_headers() {
+        let response = axum::response::Response::builder()
+            .status(axum::http::StatusCode::PARTIAL_CONTENT)
+            .header("x-request-id", "upstream-request")
+            .header(axum::http::header::CONTENT_LENGTH, "999")
+            .body(axum::body::Body::from(
+                r#"{"data":[{"id":"grok-4.7"},{"id":"grok-build"}]}"#,
+            ))
+            .unwrap();
+        let filtered = filter_current_live_model_response(response, AgentProvider::Grok)
+            .await
+            .unwrap();
+        assert_eq!(filtered.status(), axum::http::StatusCode::PARTIAL_CONTENT);
+        assert_eq!(filtered.headers()["x-request-id"], "upstream-request");
+        assert!(
+            !filtered
+                .headers()
+                .contains_key(axum::http::header::CONTENT_LENGTH)
+        );
+        let body = axum::body::to_bytes(filtered.into_body(), 1024)
+            .await
+            .unwrap();
+        let payload: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["data"].as_array().unwrap().len(), 1);
+        assert_eq!(payload["data"][0]["id"], "grok-4.7");
+    }
+}
+
+#[cfg(all(test, feature = "database-tests"))]
+mod gemini_gateway_database_tests {
+    use std::sync::{Arc, Mutex};
+
+    use aes_gcm::{
+        Aes256Gcm, Nonce,
+        aead::{Aead, KeyInit},
+    };
+    use axum::{
+        Json, Router,
+        body::{Bytes, to_bytes},
+        extract::State,
+        http::{HeaderMap, StatusCode, header},
+        routing::post,
+    };
+    use rand::RngCore;
+    use serde_json::{Value, json};
+    use sqlx::PgPool;
+    use tokio::net::TcpListener;
+    use uuid::Uuid;
+
+    use super::{
+        GatewaySelection, GeminiOperation, gemini_proxy_request_for_user, mark_active,
+        mark_rate_limited,
+    };
+    use crate::{AppConfig, AppState};
+
+    #[derive(Clone)]
+    struct FakeCodeAssist {
+        blocked_status: Arc<Mutex<StatusCode>>,
+        blocked_message: Arc<Mutex<Option<String>>>,
+        generation_tokens: Arc<Mutex<Vec<String>>>,
+    }
+
+    async fn load_code_assist() -> Json<Value> {
+        Json(json!({ "cloudaicompanionProject": "test-project" }))
+    }
+
+    async fn generate(
+        State(fake): State<FakeCodeAssist>,
+        headers: HeaderMap,
+    ) -> (StatusCode, Json<Value>) {
+        let authorization = headers
+            .get(header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_owned();
+        fake.generation_tokens
+            .lock()
+            .unwrap()
+            .push(authorization.clone());
+        if authorization == "Bearer blocked-token" {
+            let message = fake.blocked_message.lock().unwrap().clone();
+            (
+                *fake.blocked_status.lock().unwrap(),
+                Json(json!({ "error": {
+                    "status": "PERMISSION_DENIED", "message": message
+                } })),
+            )
+        } else {
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "response": {
+                        "candidates": [{
+                            "content": { "parts": [{ "text": "healthy pool" }] }
+                        }]
+                    }
+                })),
+            )
+        }
+    }
+
+    async fn add_gemini_connection(
+        state: &AppState,
+        user_id: Uuid,
+        access_token: &str,
+        older: bool,
+    ) -> Uuid {
+        let id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO agent_connections (id, user_id, provider, status)
+             VALUES ($1, $2, 'gemini', 'connected')",
+        )
+        .bind(id)
+        .bind(user_id)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+        if older {
+            sqlx::query(
+                "UPDATE agent_connections
+                 SET updated_at = NOW() - INTERVAL '1 minute' WHERE id = $1",
+            )
+            .bind(id)
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        }
+        let token = json!({
+            "access_token": access_token,
+            "cloudaicompanion_project": "test-project"
+        });
+        let cipher = Aes256Gcm::new_from_slice(&state.config.credential_encryption_key).unwrap();
+        let mut nonce = [0_u8; 12];
+        rand::rngs::OsRng.fill_bytes(&mut nonce);
+        let ciphertext = cipher
+            .encrypt(
+                Nonce::from_slice(&nonce),
+                serde_json::to_vec(&token).unwrap().as_ref(),
+            )
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO agent_connection_credentials
+             (connection_id, credential_ciphertext, credential_nonce)
+             VALUES ($1, $2, $3)",
+        )
+        .bind(id)
+        .bind(ciphertext)
+        .bind(nonce.to_vec())
+        .execute(&state.pool)
+        .await
+        .unwrap();
+        id
+    }
+
+    async fn generation(state: &AppState, selection: GatewaySelection) -> axum::response::Response {
+        gemini_proxy_request_for_user(
+            state,
+            selection,
+            "gemini-3.8-flash-high",
+            GeminiOperation::Generate,
+            Bytes::from_static(br#"{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}"#),
+        )
+        .await
+        .unwrap()
+    }
+
+    #[sqlx::test]
+    async fn blocked_gemini_pool_rotates_but_invalid_request_and_pinned_account_do_not(
+        pool: PgPool,
+    ) {
+        let fake = FakeCodeAssist {
+            blocked_status: Arc::new(Mutex::new(StatusCode::FORBIDDEN)),
+            blocked_message: Arc::new(Mutex::new(None)),
+            generation_tokens: Arc::new(Mutex::new(Vec::new())),
+        };
+        let server = Router::new()
+            .route("/v1internal:loadCodeAssist", post(load_code_assist))
+            .route("/v1internal:generateContent", post(generate))
+            .with_state(fake.clone());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream_url = format!("http://{}", listener.local_addr().unwrap());
+        let server_task = tokio::spawn(async move { axum::serve(listener, server).await.unwrap() });
+        let mut config = AppConfig::default();
+        config.gemini_code_assist_url = upstream_url;
+        let state = AppState {
+            config,
+            http: reqwest::Client::new(),
+            gateway_http: reqwest::Client::new(),
+            pool,
+        };
+        let user_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO users (id, username, password_hash)
+             VALUES ($1, $2, 'test-only')",
+        )
+        .bind(user_id)
+        .bind(user_id.simple().to_string())
+        .execute(&state.pool)
+        .await
+        .unwrap();
+        add_gemini_connection(&state, user_id, "healthy-token", true).await;
+        let blocked_id = add_gemini_connection(&state, user_id, "blocked-token", false).await;
+        let selection = GatewaySelection::from(user_id);
+
+        let response = generation(&state, selection).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 1_000_000).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&body).unwrap()["candidates"][0]["content"]["parts"][0]
+                ["text"],
+            "healthy pool"
+        );
+        assert_eq!(
+            std::mem::take(&mut *fake.generation_tokens.lock().unwrap()),
+            ["Bearer blocked-token", "Bearer healthy-token"]
+        );
+        let availability: String =
+            sqlx::query_scalar("SELECT availability_status FROM agent_connections WHERE id = $1")
+                .bind(blocked_id)
+                .fetch_one(&state.pool)
+                .await
+                .unwrap();
+        assert_eq!(availability, "active");
+
+        let pinned = GatewaySelection {
+            user_id,
+            connection_id: Some(blocked_id),
+            organization_id: None,
+        };
+        assert_eq!(
+            generation(&state, pinned).await.status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            std::mem::take(&mut *fake.generation_tokens.lock().unwrap()),
+            ["Bearer blocked-token"]
+        );
+
+        *fake.blocked_status.lock().unwrap() = StatusCode::BAD_REQUEST;
+        assert_eq!(
+            generation(&state, selection).await.status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            std::mem::take(&mut *fake.generation_tokens.lock().unwrap()),
+            ["Bearer blocked-token"]
+        );
+
+        *fake.blocked_status.lock().unwrap() = StatusCode::UNAUTHORIZED;
+        assert_eq!(generation(&state, selection).await.status(), StatusCode::OK);
+        assert_eq!(
+            std::mem::take(&mut *fake.generation_tokens.lock().unwrap()),
+            ["Bearer blocked-token", "Bearer healthy-token"]
+        );
+        let availability: String =
+            sqlx::query_scalar("SELECT availability_status FROM agent_connections WHERE id = $1")
+                .bind(blocked_id)
+                .fetch_one(&state.pool)
+                .await
+                .unwrap();
+        assert_eq!(availability, "reauth_required");
+
+        sqlx::query(
+            "UPDATE agent_connections SET availability_status = 'active', updated_at = NOW()
+             WHERE id = $1",
+        )
+        .bind(blocked_id)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+        *fake.blocked_status.lock().unwrap() = StatusCode::FORBIDDEN;
+        *fake.blocked_message.lock().unwrap() = Some("Verify your account to continue.".to_owned());
+        assert_eq!(generation(&state, selection).await.status(), StatusCode::OK);
+        assert_eq!(
+            std::mem::take(&mut *fake.generation_tokens.lock().unwrap()),
+            ["Bearer blocked-token", "Bearer healthy-token"]
+        );
+        let (availability, failure_message): (String, Option<String>) = sqlx::query_as(
+            "SELECT availability_status, failure_message FROM agent_connections WHERE id = $1",
+        )
+        .bind(blocked_id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+        assert_eq!(availability, "reauth_required");
+        assert!(failure_message.unwrap().contains("verification"));
+        assert_eq!(generation(&state, selection).await.status(), StatusCode::OK);
+        assert_eq!(
+            std::mem::take(&mut *fake.generation_tokens.lock().unwrap()),
+            ["Bearer healthy-token"]
+        );
+        // Another request may already be in flight when the challenge turns
+        // this pool red. Its later 200 or 429 must not make it selectable.
+        mark_active(&state, blocked_id).await.unwrap();
+        mark_rate_limited(&state, blocked_id).await.unwrap();
+        let availability: String =
+            sqlx::query_scalar("SELECT availability_status FROM agent_connections WHERE id = $1")
+                .bind(blocked_id)
+                .fetch_one(&state.pool)
+                .await
+                .unwrap();
+        assert_eq!(availability, "reauth_required");
+
+        // An organization request stays pinned even when another shared pool
+        // is usable. The error must describe only its selected account.
+        let org_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO organizations (id, name) VALUES ($1, 'Team')")
+            .bind(org_id)
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO organization_memberships (id, org_id, user_id, role, status, joined_at)
+             VALUES ($1, $2, $3, 'owner', 'accepted', NOW())",
+        )
+        .bind(Uuid::new_v4())
+        .bind(org_id)
+        .bind(user_id)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO organization_agents (org_id, connection_id, owner_user_id)
+             SELECT $1, id, user_id FROM agent_connections WHERE user_id = $2",
+        )
+        .bind(org_id)
+        .bind(user_id)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+        for organization_id in [None, Some(org_id)] {
+            let pinned = GatewaySelection {
+                user_id,
+                connection_id: Some(blocked_id),
+                organization_id,
+            };
+            let models = super::gemini_models_for_user(&state, pinned).await;
+            assert!(
+                matches!(models, Err(crate::error::ApiError::Provider(message))
+                if message.starts_with("The selected account needs to reconnect."))
+            );
+            for operation in [GeminiOperation::Generate, GeminiOperation::CountTokens] {
+                let result = gemini_proxy_request_for_user(
+                    &state,
+                    pinned,
+                    "gemini-3.8-flash-high",
+                    operation,
+                    Bytes::from_static(
+                        br#"{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}"#,
+                    ),
+                )
+                .await;
+                assert!(
+                    matches!(result, Err(crate::error::ApiError::Provider(message))
+                    if message.starts_with("The selected account needs to reconnect."))
+                );
+            }
+        }
+        assert!(fake.generation_tokens.lock().unwrap().is_empty());
+        server_task.abort();
+    }
+}
+
+#[cfg(all(test, feature = "database-tests"))]
+mod organization_gateway_database_tests {
+    use std::time::Duration;
+
+    use axum::{Router, body::to_bytes, http::header, routing::get};
+    use sqlx::PgPool;
+    use uuid::Uuid;
+
+    use super::{
+        GatewaySelection, OrganizationUsageEvent, connected_provider_candidates,
+        record_organization_usage, upstream_response_with_usage,
+    };
+    use crate::{AgentProvider, AppConfig, AppState, error::ApiError};
+
+    #[sqlx::test]
+    async fn organization_candidate_scope_does_not_grant_personal_pool_access(pool: PgPool) {
+        let state = AppState {
+            config: AppConfig::default(),
+            http: reqwest::Client::new(),
+            gateway_http: reqwest::Client::new(),
+            pool,
+        };
+        let owner = Uuid::new_v4();
+        let member = Uuid::new_v4();
+        let org_id = Uuid::new_v4();
+        let connection_id = Uuid::new_v4();
+        for user_id in [owner, member] {
+            sqlx::query(
+                "INSERT INTO users (id, username, password_hash) VALUES ($1, $2, 'test-only')",
+            )
+            .bind(user_id)
+            .bind(user_id.simple().to_string())
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query("INSERT INTO organizations (id, name) VALUES ($1, 'Team')")
+            .bind(org_id)
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        for (user_id, role) in [(owner, "owner"), (member, "member")] {
+            sqlx::query(
+                "INSERT INTO organization_memberships
+                 (id, org_id, user_id, role, status, joined_at)
+                 VALUES ($1, $2, $3, $4, 'accepted', NOW())",
+            )
+            .bind(Uuid::new_v4())
+            .bind(org_id)
+            .bind(user_id)
+            .bind(role)
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO agent_connections (id, user_id, provider, status, account_label)
+             VALUES ($1, $2, 'deepseek', 'connected', 'masked')",
+        )
+        .bind(connection_id)
+        .bind(owner)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO organization_agents (org_id, connection_id, owner_user_id)
+             VALUES ($1, $2, $3)",
+        )
+        .bind(org_id)
+        .bind(connection_id)
+        .bind(owner)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+
+        let personal = GatewaySelection::from(member);
+        let scoped = GatewaySelection {
+            user_id: member,
+            connection_id: Some(connection_id),
+            organization_id: Some(org_id),
+        };
+        assert!(matches!(
+            connected_provider_candidates(&state, personal, AgentProvider::Deepseek).await,
+            Err(ApiError::Forbidden)
+        ));
+        assert_eq!(
+            connected_provider_candidates(&state, scoped, AgentProvider::Deepseek)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+
+        sqlx::query("DELETE FROM organization_agents WHERE org_id = $1 AND connection_id = $2")
+            .bind(org_id)
+            .bind(connection_id)
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        assert!(matches!(
+            connected_provider_candidates(&state, scoped, AgentProvider::Deepseek).await,
+            Err(ApiError::Forbidden)
+        ));
+        sqlx::query(
+            "INSERT INTO organization_agents (org_id, connection_id, owner_user_id)
+             VALUES ($1, $2, $3)",
+        )
+        .bind(org_id)
+        .bind(connection_id)
+        .bind(owner)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            connected_provider_candidates(&state, scoped, AgentProvider::Deepseek)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        sqlx::query("DELETE FROM organization_memberships WHERE org_id = $1 AND user_id = $2")
+            .bind(org_id)
+            .bind(member)
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        assert!(matches!(
+            connected_provider_candidates(&state, scoped, AgentProvider::Deepseek).await,
+            Err(ApiError::Forbidden)
+        ));
+        sqlx::query(
+            "INSERT INTO agent_pool_join_requests
+             (id, connection_id, requester_user_id, telegram, reason, status)
+             VALUES ($1, $2, $3, 'test', 'test', 'accepted')",
+        )
+        .bind(Uuid::new_v4())
+        .bind(connection_id)
+        .bind(member)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            connected_provider_candidates(&state, personal, AgentProvider::Deepseek)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(matches!(
+            connected_provider_candidates(&state, scoped, AgentProvider::Deepseek).await,
+            Err(ApiError::Forbidden)
+        ));
+    }
+
+    #[sqlx::test]
+    async fn organization_usage_records_only_completed_generation_streams(pool: PgPool) {
+        let user_id = Uuid::new_v4();
+        let org_id = Uuid::new_v4();
+        let connection_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO users (id, username, password_hash) VALUES ($1, $2, 'test-only')")
+            .bind(user_id)
+            .bind(user_id.simple().to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO organizations (id, name) VALUES ($1, 'Stream test')")
+            .bind(org_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO agent_connections (id, user_id, provider, status, account_label)
+             VALUES ($1, $2, 'deepseek', 'connected', 'test')",
+        )
+        .bind(connection_id)
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let app = Router::new()
+            .route(
+                "/incomplete",
+                get(|| async {
+                    (
+                        [(header::CONTENT_TYPE, "text/event-stream")],
+                        "data: {\"type\":\"response.in_progress\",\"usage\":{\"input_tokens\":12}}\n\n",
+                    )
+                }),
+            )
+            .route(
+                "/complete",
+                get(|| async {
+                    (
+                        [(header::CONTENT_TYPE, "text/event-stream")],
+                        "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":12,\"output_tokens\":7}}}\n\n",
+                    )
+                }),
+            )
+            .route(
+                "/unknown",
+                get(|| async {
+                    (
+                        [(header::CONTENT_TYPE, "text/event-stream")],
+                        "data: {\"type\":\"response.completed\"}\n\n",
+                    )
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = reqwest::Client::new();
+        let event = OrganizationUsageEvent {
+            pool: pool.clone(),
+            organization_id: org_id,
+            user_id,
+            connection_id,
+            provider: AgentProvider::Deepseek,
+            model: Some("deepseek-chat".to_owned()),
+        };
+        for (path, expected_count) in [
+            ("incomplete", 0_i64),
+            ("complete", 1_i64),
+            ("unknown", 2_i64),
+        ] {
+            let upstream = client
+                .get(format!("http://{address}/{path}"))
+                .send()
+                .await
+                .unwrap();
+            let response = upstream_response_with_usage(upstream, Some(event.clone()))
+                .await
+                .unwrap();
+            to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+            let count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM organization_usage_events WHERE org_id = $1",
+            )
+            .bind(org_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(count, expected_count, "{path} stream count");
+        }
+        let known_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM organization_usage_events
+             WHERE org_id = $1 AND input_tokens = 12 AND output_tokens = 7",
+        )
+        .bind(org_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(known_count, 1);
+
+        let upstream = client
+            .get(format!("http://{address}/complete"))
+            .send()
+            .await
+            .unwrap();
+        let response = upstream_response_with_usage(upstream, Some(event))
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM agent_connections WHERE id = $1")
+            .bind(connection_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let (count, null_connections): (i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*), COUNT(*) FILTER (WHERE connection_id IS NULL)
+             FROM organization_usage_events WHERE org_id = $1",
+        )
+        .bind(org_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((count, null_connections), (3, 3));
+        server.abort();
+    }
+
+    #[sqlx::test]
+    async fn organization_usage_survives_concurrent_connection_delete(pool: PgPool) {
+        let user_id = Uuid::new_v4();
+        let org_id = Uuid::new_v4();
+        let connection_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO users (id, username, password_hash) VALUES ($1, $2, 'test-only')")
+            .bind(user_id)
+            .bind(user_id.simple().to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO organizations (id, name) VALUES ($1, 'Concurrent delete')")
+            .bind(org_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO agent_connections (id, user_id, provider, status, account_label)
+             VALUES ($1, $2, 'deepseek', 'connected', 'test')",
+        )
+        .bind(connection_id)
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut deleting = pool.begin().await.unwrap();
+        sqlx::query("DELETE FROM agent_connections WHERE id = $1")
+            .bind(connection_id)
+            .execute(&mut *deleting)
+            .await
+            .unwrap();
+        let event = OrganizationUsageEvent {
+            pool: pool.clone(),
+            organization_id: org_id,
+            user_id,
+            connection_id,
+            provider: AgentProvider::Deepseek,
+            model: Some("deepseek-chat".to_owned()),
+        };
+        let insert = tokio::spawn(async move { record_organization_usage(&event, None).await });
+
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let waiting: bool = sqlx::query_scalar(
+                    "SELECT EXISTS (
+                       SELECT 1 FROM pg_stat_activity
+                       WHERE datname = current_database()
+                         AND pid <> pg_backend_pid()
+                         AND query LIKE 'INSERT INTO organization_usage_events%'
+                         AND wait_event_type = 'Lock'
+                     )",
+                )
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+                if waiting {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("usage insert must wait for the connection deletion");
+
+        deleting.commit().await.unwrap();
+        insert.await.unwrap().unwrap();
+        let connection: Option<Uuid> = sqlx::query_scalar(
+            "SELECT connection_id FROM organization_usage_events WHERE org_id = $1",
+        )
+        .bind(org_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(connection, None);
     }
 }

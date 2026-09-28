@@ -2,20 +2,23 @@
 
 Install one OMP configuration for every provider pool available through your
 Hub William gateway key. OMP is the coding agent “with the IDE wired in”; this
-installer adds Hub providers without replacing your existing OMP models.
+installer refreshes the Hub provider block while preserving unrelated config.
 
 ## Install
 
 ```sh
-curl -fsSL https://hub.example/omp.py | python3 - --url=https://api.hub.example --key=YOUR_GATEWAY_KEY
+curl -fsSL https://hub.example/omp.py | python3 - --url=https://api.hub.example
 ```
 
-Omit `--key` to enter the key in a hidden prompt and keep it out of shell
-history. The installer writes namespaced providers into a managed block in
-`~/.omp/agent/models.yml` (or an existing `models.yaml`), preserves unrelated
-providers byte-for-byte, creates one backup, and writes with owner-only
-permissions. If OMP still has a legacy `models.json`, run `omp models` once to
-let OMP migrate it before rerunning the installer.
+Enter the key in the hidden prompt to keep it out of shell history. The
+installer writes its managed provider block to
+`~/.omp/agent/models.yml` (or an existing `models.yaml`), creates one backup,
+and writes with owner-only permissions. If OMP still has a legacy `models.json`,
+run `omp models` once to let OMP migrate it before rerunning the installer.
+
+To pass an existing key explicitly, append `--key=YOUR_GATEWAY_KEY` after the
+URL and replace the placeholder. The key may remain in shell history. A revoked
+or invalid Hub key stops the installer without changing your config.
 
 ## Models
 
@@ -44,13 +47,14 @@ upstream provider keep their native behavior; add a local override yourself
 only when you want a smaller budget.
 
 Grok connections created before the current Build scopes were introduced must
-be reconnected once in `/agents`, then this installer must be run again. The
-installer never falls back from subscription quota to a paid xAI API key.
+be reconnected once in `/agents`, then this installer must be run again. If the
+live Grok catalogue is temporarily unavailable while another provider remains
+reachable, the installer still writes the `hub-grok/grok-build` entry. If no
+models can be discovered, it stops without changing the config. It never falls
+back from subscription quota to a paid xAI API key.
 
 ## Ownership and security
 
-The installer owns only content between its two `hub-william: providers`
-markers. It refuses to claim an existing `hub-*` provider outside those markers
-or a malformed YAML root. The OMP file contains one revocable Hub gateway key,
-never an upstream API key or provider OAuth token. Treat it as a password and
-revoke it from Hub William if the machine is lost or compromised.
+The OMP file contains one revocable Hub gateway key, never an upstream API key
+or provider OAuth token. Treat it as a password and revoke it from Hub William
+if the machine is lost or compromised.

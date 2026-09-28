@@ -13,7 +13,7 @@ import {
 import catalogService, {
   GITHUB_REPOSITORY_URL,
   type CatalogCollection,
-} from "@/services/catalog";
+} from "@/services/catalog-library";
 
 import CatalogCanvasCollectionFiles from "./catalog-canvas-collection-files";
 import CatalogCanvasCollectionUsage from "./catalog-canvas-collection-usage";

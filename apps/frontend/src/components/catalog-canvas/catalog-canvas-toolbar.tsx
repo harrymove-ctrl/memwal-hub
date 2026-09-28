@@ -4,7 +4,7 @@ import { GitPullRequest, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Flex from "@/components/ui/flex";
 import { Input } from "@/components/ui/input";
-import { GITHUB_REPOSITORY_URL } from "@/services/catalog";
+import { GITHUB_REPOSITORY_URL } from "@/services/catalog-library";
 
 interface CatalogCanvasToolbarProps {
   searchPlaceholder: string;

@@ -7,7 +7,8 @@ mod error;
 mod gateway;
 mod health;
 mod openapi;
-mod pool_share;
+mod organizations;
+mod playground;
 pub mod reasoning;
 mod telegram;
 mod telegram_catalogue;
@@ -44,8 +45,10 @@ use auth::{login, logout, refresh, register, session};
 pub use config::AppConfig;
 pub use connections::{
     AgentConnection, AgentConnectionStatus, AgentProvider, CompleteAuthorizationRequest,
-    ConnectDeepseekRequest, ProviderCredentialRefreshSummary, StartAgentConnectionRequest,
-    refresh_due_provider_credentials, refresh_stored_connection_metadata,
+    ConnectDeepseekRequest, ProviderCredentialRefreshResult, ProviderCredentialRefreshStatus,
+    ProviderCredentialRefreshSummary, StartAgentConnectionRequest,
+    refresh_all_provider_credentials, refresh_due_provider_credentials,
+    refresh_nightly_provider_credentials, refresh_stored_connection_metadata,
 };
 use connections::{
     complete_authorization, connect_deepseek, disconnect, get_connection, list_connections,
@@ -61,6 +64,13 @@ use gateway::{
 pub use health::HealthResponse;
 use health::health;
 pub use openapi::ApiDoc;
+pub use organizations::{
+    CreateOrganization, InviteOrganizationMember, Organization, OrganizationAgent,
+    OrganizationAgentDetails, OrganizationAgentListQuery, OrganizationInvitation,
+    OrganizationMember, OrganizationOverview, OrganizationPeriodQuery, OrganizationUsage,
+    OrganizationUsageBreakdown, OrganizationUsageDay, OrganizationUsageQuery,
+    ShareOrganizationAgent,
+};
 pub use telegram::{
     CreateTelegramOrder, SepayResult, SepayTransaction, TelegramAudience, TelegramOrder,
 };
@@ -104,9 +114,9 @@ pub fn gateway_http_client() -> Result<Client, reqwest::Error> {
         .build()
 }
 
-pub fn app(state: AppState) -> Router {
-    let mut browser_origins = vec![state.config.frontend_origin.clone()];
-    if !state.config.cookie_secure {
+fn browser_origins(config: &AppConfig) -> Vec<axum::http::HeaderValue> {
+    let mut browser_origins = vec![config.frontend_origin.clone()];
+    if !config.cookie_secure {
         for origin in [
             "http://localhost:5173".parse().expect("valid local origin"),
             "http://127.0.0.1:5173".parse().expect("valid local origin"),
@@ -120,8 +130,12 @@ pub fn app(state: AppState) -> Router {
             }
         }
     }
+    browser_origins
+}
+
+pub fn app(state: AppState) -> Router {
     let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::list(browser_origins))
+        .allow_origin(AllowOrigin::list(browser_origins(&state.config)))
         .allow_methods([Method::GET, Method::POST, Method::DELETE])
         .allow_headers([
             AUTHORIZATION,
@@ -203,6 +217,40 @@ pub fn app(state: AppState) -> Router {
         )
         .route("/agent-pools", get(list_agent_pools))
         .route(
+            "/organizations",
+            get(organizations::list_organizations).post(organizations::create_organization),
+        )
+        .route(
+            "/organization-invitations",
+            get(organizations::list_invitations),
+        )
+        .route(
+            "/organization-invitations/{invitation_id}/accept",
+            post(organizations::accept_invitation),
+        )
+        .route(
+            "/organization-invitations/{invitation_id}",
+            axum::routing::delete(organizations::decline_invitation),
+        )
+        .route("/organizations/{id}/overview", get(organizations::overview))
+        .route(
+            "/organizations/{id}/agents",
+            get(organizations::list_agents).post(organizations::share_agent),
+        )
+        .route(
+            "/organizations/{id}/agents/{connection_id}",
+            axum::routing::delete(organizations::unshare_agent),
+        )
+        .route(
+            "/organizations/{id}/members",
+            get(organizations::list_members).post(organizations::invite_member),
+        )
+        .route(
+            "/organizations/{id}/members/{username}",
+            axum::routing::delete(organizations::remove_member),
+        )
+        .route("/organizations/{id}/usage", get(organizations::usage))
+        .route(
             "/agent-pools/{connection_id}/requests",
             post(create_request),
         )
@@ -246,6 +294,19 @@ pub fn app(state: AppState) -> Router {
         .route(
             "/agent-auth/device/decision",
             post(decide_device_authorization),
+        )
+        .route(
+            "/playground/{provider}/accounts/{connection_id}/models",
+            get(playground::models),
+        )
+        .merge(
+            Router::new()
+                .route("/playground/chat", post(playground::chat))
+                .layer(DefaultBodyLimit::max(32 * 1024 * 1024))
+                .layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    playground::authorize_chat,
+                )),
         )
         .merge(gateway_routes)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))

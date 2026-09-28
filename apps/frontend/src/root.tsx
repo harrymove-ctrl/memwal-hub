@@ -2,6 +2,7 @@ import { useState, type PropsWithChildren } from "react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Links, Meta, Outlet, Scripts, ScrollRestoration } from "react-router";
 
+import NavigationProgress from "@/components/navigation-progress";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import assetPath from "@/utils/utils.asset-path";
@@ -12,7 +13,7 @@ import type { Route } from "./+types/root";
 // eslint-disable-next-line react-refresh/only-export-components
 export const links: Route.LinksFunction = () => [
   // Without this the browser falls back to a path-relative `/favicon.ico`,
-  // which misses on every route below the root — `/library/favicon.ico` is a
+  // which misses on every route below the root — `/tools/favicon.ico` is a
   // 404, and so is every URL under the Pages base path.
   { rel: "icon", href: assetPath("favicon.ico"), sizes: "any" },
   { rel: "apple-touch-icon", href: assetPath("apple-touch-icon.png") },
@@ -77,6 +78,8 @@ export default function Root() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
+        <NavigationProgress />
+
         <Outlet />
 
         <Toaster position="top-right" richColors />

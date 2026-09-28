@@ -4,7 +4,7 @@ import { useSearchParams } from "react-router";
 import catalogService, {
   type CatalogCollection,
   type CatalogSection,
-} from "@/services/catalog";
+} from "@/services/catalog-library";
 
 import CatalogCanvasCollectionCard from "./catalog-canvas-collection-card";
 import CatalogCanvasCollectionDetail from "./catalog-canvas-collection-detail";

@@ -21,7 +21,7 @@ import {
   bodyWithoutFrontMatter,
   skillSections,
 } from "@/utils/utils.skill-source";
-import catalogService from "@/services/catalog";
+import catalogService from "@/services/catalog-library";
 
 const LEFT_NODES = [
   { key: "frontmatter" as const, y: 40 },

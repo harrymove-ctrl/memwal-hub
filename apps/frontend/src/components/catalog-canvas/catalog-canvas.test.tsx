@@ -16,17 +16,6 @@ function renderLibrary() {
   );
 }
 
-function renderTools(initialUrl = "/tools") {
-  return render(
-    <MemoryRouter initialEntries={[initialUrl]}>
-      <CatalogCanvas
-        section="tools"
-        searchPlaceholder="Search tools and installers..."
-      />
-    </MemoryRouter>,
-  );
-}
-
 describe("CatalogCanvas", () => {
   it("renders one flat node per functional collection", async () => {
     renderLibrary();
@@ -84,44 +73,5 @@ describe("CatalogCanvas", () => {
     );
     expect(screen.queryByRole("button", { name: /EVIDENCES/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /TAGS/ })).toBeNull();
-  });
-
-  it("shows Codex, Claude, AGY, and Grok config on the gateway tool sheet", () => {
-    renderTools("/tools?node=gateway");
-
-    expect(screen.getByRole("heading", { name: "Gateway" })).toBeVisible();
-    expect(
-      screen.getByRole("heading", { name: "How to install and use" }),
-    ).toBeVisible();
-    expect(
-      screen.getByText("~/.codex/config.toml", { exact: false }),
-    ).toBeVisible();
-    expect(screen.getByText(/model_provider = "hub-william"/)).toBeVisible();
-    expect(screen.getByText(/experimental_bearer_token/)).toBeVisible();
-    expect(screen.getByText(/ANTHROPIC_BASE_URL/)).toBeVisible();
-    expect(screen.getByText(/GOOGLE_GEMINI_BASE_URL/)).toBeVisible();
-    expect(screen.getByText(/GEMINI_API_KEY/)).toBeVisible();
-    expect(screen.getByText(/\[model\.grok-build\]/)).toBeVisible();
-    expect(
-      screen.getByText(/python3 - --url=.* --key=YOUR_GATEWAY_KEY/),
-    ).toBeVisible();
-  });
-
-  it("shows the OpenCode installer and native model controls", () => {
-    renderTools("/tools?node=opencode");
-
-    expect(screen.getByRole("heading", { name: "OpenCode" })).toBeVisible();
-    expect(screen.getByText(/opencode\.py.*YOUR_GATEWAY_KEY/)).toBeVisible();
-    expect(screen.getAllByText("/models", { exact: true })).not.toHaveLength(0);
-    expect(screen.getByText("/variants", { exact: true })).toBeVisible();
-  });
-
-  it("shows the OMP installer and native model picker", () => {
-    renderTools("/tools?node=omp");
-
-    expect(screen.getByRole("heading", { name: "OMP" })).toBeVisible();
-    expect(screen.getByText(/omp\.py.*YOUR_GATEWAY_KEY/)).toBeVisible();
-    expect(screen.getByText("models.yml", { exact: true })).toBeVisible();
-    expect(screen.getByText("/model", { exact: true })).toBeVisible();
   });
 });

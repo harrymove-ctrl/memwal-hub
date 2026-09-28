@@ -4,7 +4,7 @@ import { tv } from "tailwind-variants";
 import CopyBlock from "@/components/copy-block";
 import CopyCommand from "@/components/copy-command";
 import Flex from "@/components/ui/flex";
-import catalogService, { type CatalogCollection } from "@/services/catalog";
+import catalogService, { type CatalogCollection } from "@/services/catalog-library";
 import {
   GATEWAY_KEY_PLACEHOLDER,
   gatewayAgentConfigs,
