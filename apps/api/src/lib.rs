@@ -128,6 +128,8 @@ fn browser_origins(config: &AppConfig) -> Vec<axum::http::HeaderValue> {
             "http://127.0.0.1:5174".parse().expect("valid local origin"),
             "http://localhost:3000".parse().expect("valid local origin"),
             "http://127.0.0.1:3000".parse().expect("valid local origin"),
+            "http://localhost:4173".parse().expect("valid local origin"),
+            "http://127.0.0.1:4173".parse().expect("valid local origin"),
         ] {
             if !browser_origins.contains(&origin) {
                 browser_origins.push(origin);
@@ -464,6 +466,8 @@ mod tests {
             "http://127.0.0.1:5174",
             "http://localhost:3000",
             "http://127.0.0.1:3000",
+            "http://localhost:4173",
+            "http://127.0.0.1:4173",
         ] {
             let response = service
                 .clone()
