@@ -48,6 +48,23 @@ if (!HTMLElement.prototype.scrollIntoView) {
   HTMLElement.prototype.scrollIntoView = () => {};
 }
 
+if (typeof localStorage === "undefined" || typeof localStorage.setItem !== "function") {
+  const store = new Map<string, string>();
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      clear: () => store.clear(),
+      getItem: (key: string) => store.get(key) ?? null,
+      key: (index: number) => [...store.keys()][index] ?? null,
+      get length() {
+        return store.size;
+      },
+      removeItem: (key: string) => store.delete(key),
+      setItem: (key: string, value: string) => store.set(key, String(value)),
+    },
+  });
+}
+
 // Radix Popper (DropdownMenuContent, PopoverContent) measures via
 // ResizeObserver to position floating content; jsdom does not implement it.
 if (!globalThis.ResizeObserver) {

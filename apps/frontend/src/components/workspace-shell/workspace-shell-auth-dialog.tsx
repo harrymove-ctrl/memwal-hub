@@ -17,8 +17,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import WalletLogin from "@/components/wallet-login";
+import WalletProviders from "@/components/wallet-providers";
 import { AuthServiceError } from "@/services/auth";
-import type { LoginCredentials, RegisterCredentials } from "@/services/auth";
+import type {
+  AuthenticatedUser,
+  LoginCredentials,
+  RegisterCredentials,
+} from "@/services/auth";
 
 export type WorkspaceShellAuthMode = "login" | "register";
 
@@ -33,6 +39,7 @@ interface WorkspaceShellAuthDialogProps {
     mode: WorkspaceShellAuthMode,
     credentials: LoginCredentials | RegisterCredentials,
   ) => Promise<void>;
+  onWalletAuthenticated: (user: AuthenticatedUser) => void;
   onOpenChange: (open: boolean) => void;
   open: boolean;
 }
@@ -40,6 +47,7 @@ interface WorkspaceShellAuthDialogProps {
 export default function WorkspaceShellAuthDialog({
   onAuthenticate,
   onOpenChange,
+  onWalletAuthenticated,
   open,
 }: WorkspaceShellAuthDialogProps) {
   const [mode, setMode] = useState<WorkspaceShellAuthMode>("login");
@@ -197,6 +205,10 @@ export default function WorkspaceShellAuthDialog({
             </Button>
           </DialogFooter>
         </form>
+
+        <WalletProviders>
+          <WalletLogin onAuthenticated={onWalletAuthenticated} />
+        </WalletProviders>
       </FocusReturnDialogContent>
     </Dialog>
   );

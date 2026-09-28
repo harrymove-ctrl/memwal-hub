@@ -28,6 +28,8 @@ use crate::{
         crate::health::health,
         crate::auth::register,
         crate::auth::login,
+        crate::auth::wallet_nonce,
+        crate::auth::wallet_login,
         crate::auth::session,
         crate::auth::logout,
         crate::auth::refresh,
@@ -131,7 +133,10 @@ use crate::{
         OrganizationUsageBreakdown,
         OrganizationUsageDay,
         OrganizationUsageQuery,
-        ShareOrganizationAgent
+        ShareOrganizationAgent,
+        crate::auth::WalletLoginRequest,
+        crate::auth::WalletNonceRequest,
+        crate::auth::WalletNonceResponse
     )),
     tags(
         (name = "auth", description = "Browser account sessions"),

@@ -13,6 +13,7 @@ pub mod reasoning;
 mod telegram;
 mod telegram_catalogue;
 mod usage;
+mod wallet_signature;
 
 use std::time::Duration;
 
@@ -40,8 +41,11 @@ pub use agent_pools::{
 use agent_pools::{
     create_request, decide_request, invite_member, list as list_agent_pools, remove_member,
 };
-pub use auth::{AuthenticatedUser, LoginRequest, RegisterRequest, SessionResponse};
-use auth::{login, logout, refresh, register, session};
+pub use auth::{
+    AuthenticatedUser, LoginRequest, RegisterRequest, SessionResponse, WalletLoginRequest,
+    WalletNonceRequest, WalletNonceResponse,
+};
+use auth::{login, logout, refresh, register, session, wallet_login, wallet_nonce};
 pub use config::AppConfig;
 pub use connections::{
     AgentConnection, AgentConnectionStatus, AgentProvider, CompleteAuthorizationRequest,
@@ -174,6 +178,8 @@ pub fn app(state: AppState) -> Router {
         .route("/auth/session", get(session))
         .route("/auth/logout", post(logout))
         .route("/auth/refresh", post(refresh))
+        .route("/auth/wallet/nonce", post(wallet_nonce))
+        .route("/auth/wallet/login", post(wallet_login))
         .route("/internal/telegram/contacts", post(observe_contact))
         .route(
             "/internal/telegram/contacts/{telegram_user_id}",

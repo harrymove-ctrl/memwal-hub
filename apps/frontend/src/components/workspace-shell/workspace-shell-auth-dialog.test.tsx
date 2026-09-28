@@ -14,6 +14,7 @@ describe("WorkspaceShellAuthDialog", () => {
         open
         onAuthenticate={authenticate}
         onOpenChange={vi.fn()}
+        onWalletAuthenticated={vi.fn()}
       />,
     );
 

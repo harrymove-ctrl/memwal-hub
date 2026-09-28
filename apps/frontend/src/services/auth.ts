@@ -13,6 +13,12 @@ export interface LoginCredentials {
   username: string;
 }
 
+export interface WalletLoginRequest {
+  address: string;
+  nonce: string;
+  signature: string;
+}
+
 export interface RegisterCredentials extends LoginCredentials {
   recoveryEmail: string;
 }
@@ -102,6 +108,50 @@ async function logout() {
   }
 }
 
-const authService = { login, logout, register, session };
+async function walletNonce(address: string) {
+  return walletRequest<{ message: string; nonce: string }>(
+    "/auth/wallet/nonce",
+    { address },
+  );
+}
+
+async function walletLogin(body: WalletLoginRequest) {
+  const data = await walletRequest<{ user: ApiUser }>(
+    "/auth/wallet/login",
+    body,
+  );
+  return userFromApi(data.user);
+}
+
+async function walletRequest<T>(path: string, body: unknown): Promise<T> {
+  try {
+    const response = await globalThis.fetch(`${apiBaseUrl}${path}`, {
+      body: JSON.stringify(body),
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+    const payload = (await response.json().catch(() => null)) as
+      | (T & { message?: string })
+      | null;
+    if (!response.ok) {
+      throw new AuthServiceError(payload?.message ?? "Authentication failed.");
+    }
+    if (!payload) throw new AuthServiceError("Authentication failed.");
+    return payload;
+  } catch (error) {
+    if (error instanceof AuthServiceError) throw error;
+    throw new AuthServiceError("The authentication service is unavailable.");
+  }
+}
+
+const authService = {
+  login,
+  logout,
+  register,
+  session,
+  walletLogin,
+  walletNonce,
+};
 
 export default authService;

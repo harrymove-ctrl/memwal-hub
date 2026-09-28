@@ -52,6 +52,12 @@ export default function WorkspaceShellSession({
     setAuthOpen(false);
   }
 
+  function authenticateWallet(authenticatedUser: AuthenticatedUser) {
+    setUser(authenticatedUser);
+    setStatus("authenticated");
+    setAuthOpen(false);
+  }
+
   async function signOut() {
     try {
       await authService.logout();
@@ -76,6 +82,7 @@ export default function WorkspaceShellSession({
         open={authOpen}
         onAuthenticate={authenticate}
         onOpenChange={setAuthOpen}
+        onWalletAuthenticated={authenticateWallet}
       />
     </WorkspaceShellSessionContext.Provider>
   );
