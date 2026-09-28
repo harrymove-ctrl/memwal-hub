@@ -25,10 +25,22 @@ import gatewayKeysService, {
 } from "@/services/gateway-keys";
 import { copyText } from "@/utils/utils.clipboard";
 
-export default function AgentsGatewayKeyDialog() {
+interface AgentsGatewayKeyDialogProps {
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  hideTrigger?: boolean;
+}
+
+export default function AgentsGatewayKeyDialog({
+  open: controlledOpen,
+  onOpenChange: setControlledOpen,
+  hideTrigger = false,
+}: AgentsGatewayKeyDialogProps = {}) {
   const session = useWorkspaceSession();
   const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = controlledOpen ?? uncontrolledOpen;
+  const setOpen = setControlledOpen ?? setUncontrolledOpen;
   const [createdKey, setCreatedKey] = useState<CreatedGatewayKey | null>(null);
   const gatewayKeyQueryKey = [
     ...gatewayKeysService.queryKey,
@@ -82,12 +94,14 @@ export default function AgentsGatewayKeyDialog() {
 
   return (
     <Dialog open={open} onOpenChange={changeOpen}>
-      <DialogTrigger asChild>
-        <Button className="h-10 px-4" type="button" variant="outline">
-          <KeyRound aria-hidden="true" />
-          Gateway Key
-        </Button>
-      </DialogTrigger>
+      {hideTrigger ? null : (
+        <DialogTrigger asChild>
+          <Button className="h-10 px-4" type="button" variant="outline">
+            <KeyRound aria-hidden="true" />
+            Gateway Key
+          </Button>
+        </DialogTrigger>
+      )}
 
       <DialogContent className="sm:max-w-md">
         <DialogHeader>

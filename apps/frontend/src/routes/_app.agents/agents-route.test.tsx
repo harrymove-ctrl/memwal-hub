@@ -380,13 +380,16 @@ describe("AgentsRoute", () => {
     },
   );
 
-  it("loads real pools from the API and links Install to the gateway tool", async () => {
+  it("exposes Install for the gateway tool from the More menu", async () => {
+    const user = userEvent.setup();
     const fetchMock = renderRoute();
 
-    expect(screen.getByRole("link", { name: /install/i })).toHaveAttribute(
-      "href",
-      "/tools?node=gateway",
+    await user.click(
+      screen.getByRole("button", { name: "More agent setup options" }),
     );
+    expect(
+      await screen.findByRole("menuitem", { name: /install/i }),
+    ).toBeVisible();
     expect(await screen.findByText("du**y@exa**.com")).toBeVisible();
     expect(
       fetchMock.mock.calls.some(
@@ -431,7 +434,9 @@ describe("AgentsRoute", () => {
     });
     expect(accounts.querySelectorAll("li")).toHaveLength(6);
     expect(screen.getByRole("button", { name: "Connect Agent" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Gateway Key" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "More agent setup options" }),
+    ).toBeVisible();
     expect(screen.queryByText("du**y@exa**.com")).not.toBeInTheDocument();
   });
 
@@ -711,7 +716,9 @@ describe("AgentsRoute", () => {
       }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connect Agent" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Gateway Key" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "More agent setup options" }),
+    ).toBeVisible();
   });
 
   it("marks exhausted accounts without exposing warning reasons outside management", async () => {

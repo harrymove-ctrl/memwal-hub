@@ -1,10 +1,16 @@
 import { useCallback, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, Download } from "lucide-react";
-import { Link } from "react-router";
+import { Bot, Download, KeyRound, MoreHorizontal } from "lucide-react";
+import { useNavigate } from "react-router";
 
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import Flex from "@/components/ui/flex";
 import { useWorkspaceSession } from "@/components/workspace-shell/workspace-shell-session-context";
 import AgentsConnectDialog from "@/components/agents-connect-dialog";
@@ -43,10 +49,12 @@ interface PoolMemberVariables {
 }
 
 export default function AgentsRoute() {
+  const navigate = useNavigate();
   const session = useWorkspaceSession();
   const queryClient = useQueryClient();
   const [requestPoolId, setRequestPoolId] = useState<string | null>(null);
   const [reviewPoolId, setReviewPoolId] = useState<string | null>(null);
+  const [gatewayKeyOpen, setGatewayKeyOpen] = useState(false);
   const refreshAgentData = useCallback(
     () =>
       Promise.all(
@@ -228,21 +236,41 @@ export default function AgentsRoute() {
           </div>
 
           <Flex className="flex-wrap items-center gap-2">
-            <Button asChild className="h-10 px-4" variant="outline">
-              <Link to="/tools?node=gateway">
-                <Download aria-hidden="true" />
-                Install
-              </Link>
-            </Button>
-
-            <AgentsGatewayKeyDialog />
-
             <AgentsConnectDialog
               onConnected={() =>
                 void queryClient.invalidateQueries({
                   queryKey: agentPoolsService.queryKey,
                 })
               }
+            />
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  aria-label="More agent setup options"
+                  className="size-10"
+                  type="button"
+                  variant="outline"
+                >
+                  <MoreHorizontal aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => navigate("/tools?node=gateway")}>
+                  <Download aria-hidden="true" />
+                  Install
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setGatewayKeyOpen(true)}>
+                  <KeyRound aria-hidden="true" />
+                  Gateway Key
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <AgentsGatewayKeyDialog
+              hideTrigger
+              open={gatewayKeyOpen}
+              onOpenChange={setGatewayKeyOpen}
             />
           </Flex>
         </header>

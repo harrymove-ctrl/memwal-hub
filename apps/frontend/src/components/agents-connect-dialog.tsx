@@ -72,13 +72,18 @@ interface ProviderOption {
   provider: AgentProvider;
 }
 
-const providers: ProviderOption[] = [
+const signInProviders: ProviderOption[] = [
   { label: "ChatGPT", provider: "chatgpt" },
   { label: "Claude", provider: "claude" },
   { label: "Gemini / AGY", provider: "gemini" },
-  { label: "DeepSeek", provider: "deepseek" },
   { label: "Grok", provider: "grok" },
 ];
+
+const apiKeyProviders: ProviderOption[] = [
+  { label: "DeepSeek", provider: "deepseek" },
+];
+
+const allProviders: ProviderOption[] = [...signInProviders, ...apiKeyProviders];
 
 function AgentProviderOption({
   connectedCount,
@@ -425,7 +430,7 @@ export default function AgentsConnectDialog({
               {availableConnections.map((connection) => (
                 <li key={connection.id}>
                   <Button
-                    aria-label={`Add ${providers.find((item) => item.provider === connection.provider)?.label ?? connection.provider} ${connection.accountLabel ?? "Connected account"} to organization`}
+                    aria-label={`Add ${allProviders.find((item) => item.provider === connection.provider)?.label ?? connection.provider} ${connection.accountLabel ?? "Connected account"} to organization`}
                     className="h-auto w-full justify-between gap-2 px-3 py-2 text-left"
                     disabled={addingExistingId !== null}
                     onClick={() => void addExisting(connection)}
@@ -434,7 +439,7 @@ export default function AgentsConnectDialog({
                   >
                     <div className="min-w-0 space-y-1">
                       <p className="truncate">
-                        {providers.find(
+                        {allProviders.find(
                           (item) => item.provider === connection.provider,
                         )?.label ?? connection.provider}{" "}
                         · {connection.accountLabel ?? "Connected account"}
@@ -459,32 +464,71 @@ export default function AgentsConnectDialog({
           <h3 className="text-sm font-semibold">Connect a new account</h3>
         ) : null}
 
-        <ul className="grid gap-2">
-          {providers.map(({ label, provider }) => (
-            <AgentProviderOption
-              key={provider}
-              connectedCount={
-                connections.filter(
-                  (connection) =>
-                    connection.provider === provider &&
-                    connection.status === "connected",
-                ).length
-              }
-              reconnectCount={
-                connections.filter(
-                  (connection) =>
-                    connection.provider === provider &&
-                    connection.status === "connected" &&
-                    connection.availabilityStatus === "reauth_required",
-                ).length
-              }
-              disabled={startMutation.isPending || deepseekMutation.isPending}
-              label={label}
-              onConnect={connect}
-              provider={provider}
-            />
-          ))}
-        </ul>
+        <div className="space-y-3">
+          <section className="space-y-1.5">
+            <p className="text-xs font-medium text-muted-foreground">
+              Sign in — opens the provider's own authorization page
+            </p>
+            <ul className="grid gap-2">
+              {signInProviders.map(({ label, provider }) => (
+                <AgentProviderOption
+                  key={provider}
+                  connectedCount={
+                    connections.filter(
+                      (connection) =>
+                        connection.provider === provider &&
+                        connection.status === "connected",
+                    ).length
+                  }
+                  reconnectCount={
+                    connections.filter(
+                      (connection) =>
+                        connection.provider === provider &&
+                        connection.status === "connected" &&
+                        connection.availabilityStatus === "reauth_required",
+                    ).length
+                  }
+                  disabled={startMutation.isPending || deepseekMutation.isPending}
+                  label={label}
+                  onConnect={connect}
+                  provider={provider}
+                />
+              ))}
+            </ul>
+          </section>
+
+          <section className="space-y-1.5">
+            <p className="text-xs font-medium text-muted-foreground">
+              API key — verified once, stored encrypted
+            </p>
+            <ul className="grid gap-2">
+              {apiKeyProviders.map(({ label, provider }) => (
+                <AgentProviderOption
+                  key={provider}
+                  connectedCount={
+                    connections.filter(
+                      (connection) =>
+                        connection.provider === provider &&
+                        connection.status === "connected",
+                    ).length
+                  }
+                  reconnectCount={
+                    connections.filter(
+                      (connection) =>
+                        connection.provider === provider &&
+                        connection.status === "connected" &&
+                        connection.availabilityStatus === "reauth_required",
+                    ).length
+                  }
+                  disabled={startMutation.isPending || deepseekMutation.isPending}
+                  label={label}
+                  onConnect={connect}
+                  provider={provider}
+                />
+              ))}
+            </ul>
+          </section>
+        </div>
 
         {startMutation.isPending ? (
           <Flex className="items-center gap-2 text-xs text-muted-foreground">
@@ -557,7 +601,7 @@ export default function AgentsConnectDialog({
         ) : null}
 
         {currentConnection?.status === "connected" ? (
-          <Alert className="border-emerald-200 bg-emerald-50 text-emerald-800">
+          <Alert className="border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300">
             <CheckCircle2 aria-hidden="true" />
             <AlertTitle>Agent connected</AlertTitle>
             <AlertDescription>

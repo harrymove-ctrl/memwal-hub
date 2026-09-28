@@ -48,6 +48,18 @@ if (!HTMLElement.prototype.scrollIntoView) {
   HTMLElement.prototype.scrollIntoView = () => {};
 }
 
+// Radix Popper (DropdownMenuContent, PopoverContent) measures via
+// ResizeObserver to position floating content; jsdom does not implement it.
+if (!globalThis.ResizeObserver) {
+  class ResizeObserverStub implements ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  globalThis.ResizeObserver =
+    ResizeObserverStub as unknown as typeof ResizeObserver;
+}
+
 afterEach(() => {
   cleanup();
 });

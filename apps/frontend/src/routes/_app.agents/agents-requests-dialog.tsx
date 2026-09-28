@@ -52,7 +52,7 @@ import {
 const decisionButton = tv({
   variants: {
     decision: {
-      accept: "border-emerald-200 bg-emerald-50 text-emerald-700",
+      accept: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300",
       reject: "border-red-200 bg-red-50 text-red-700",
     },
   },
@@ -418,7 +418,7 @@ export default function AgentsRequestsDialog({
           {currentRefreshConnection &&
           !currentRefreshConnection.authorization &&
           !currentRefreshConnection.failureMessage ? (
-            <Alert className="border-emerald-200 bg-emerald-50 text-emerald-800">
+            <Alert className="border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300">
               <CheckCircle2 aria-hidden="true" />
               <AlertTitle>Provider credential refreshed</AlertTitle>
               <AlertDescription>
