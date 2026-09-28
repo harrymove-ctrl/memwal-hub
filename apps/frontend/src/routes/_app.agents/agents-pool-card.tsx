@@ -18,7 +18,7 @@ import AgentsAvatarStack from "./agents-avatar-stack";
 
 const memberSection = tv({
   base: "group",
-  variants: { afterUsage: { true: "border-t border-zinc-100 pt-4" } },
+  variants: { afterUsage: { true: "border-t border-border pt-4" } },
 });
 
 interface AgentsPoolCardProps {
@@ -43,16 +43,16 @@ export default function AgentsPoolCard({
   return (
     <article
       aria-label={`${pool.agent} account ${pool.accountLabel} details`}
-      className="min-w-0 overflow-hidden bg-white"
+      className="min-w-0 overflow-hidden bg-card"
     >
-      <header className="border-b border-zinc-100 p-5">
+      <header className="border-b border-border p-5">
         <Flex className="items-start justify-between gap-3">
           <Flex className="min-w-0 items-center gap-2.5">
             <AgentsProviderIcon provider={pool.agent} />
 
             <div className="min-w-0">
               <Flex className="flex-wrap items-center gap-2">
-                <p className="text-[10px] font-medium tracking-wider text-zinc-500 uppercase">
+                <p className="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
                   {pool.agent}
                 </p>
 
@@ -74,7 +74,7 @@ export default function AgentsPoolCard({
             type="button"
             size="icon-sm"
             variant="ghost"
-            className="-mt-1 -mr-1 shrink-0 text-zinc-400"
+            className="-mt-1 -mr-1 shrink-0 text-muted-foreground"
             onClick={onClose}
           >
             <X aria-hidden="true" className="size-4" />
@@ -91,14 +91,14 @@ export default function AgentsPoolCard({
         ) : null}
 
         <details className={memberSection({ afterUsage: showUsage })}>
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-sm text-xs focus-visible:outline-2 focus-visible:outline-indigo-500 [&::-webkit-details-marker]:hidden">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-sm text-xs focus-visible:outline-2 focus-visible:outline-primary [&::-webkit-details-marker]:hidden">
             <span className="inline-flex items-center gap-2">
-              <Users aria-hidden="true" className="size-3.5 text-zinc-400" />
+              <Users aria-hidden="true" className="size-3.5 text-muted-foreground" />
               Members · {pool.members.length}
             </span>
             <ChevronDown
               aria-hidden="true"
-              className="size-3.5 text-zinc-400 group-open:rotate-180"
+              className="size-3.5 text-muted-foreground group-open:rotate-180"
             />
           </summary>
 
@@ -111,7 +111,7 @@ export default function AgentsPoolCard({
                 <div className="min-w-0">
                   <p className="truncate font-medium">{member.username}</p>
 
-                  <p className="mt-1 text-[10px] text-zinc-400">
+                  <p className="mt-1 text-[10px] text-muted-foreground">
                     Joined{" "}
                     <time dateTime={member.joinedAt}>
                       {agentPoolsService.createdLabel(member.joinedAt)}
@@ -129,15 +129,15 @@ export default function AgentsPoolCard({
           </ul>
         </details>
 
-        <dl className="space-y-2 border-t border-zinc-100 pt-4 text-[11px]">
+        <dl className="space-y-2 border-t border-border pt-4 text-[11px]">
           <Flex className="items-center justify-between gap-3">
-            <dt className="text-zinc-400">Owner</dt>
+            <dt className="text-muted-foreground">Owner</dt>
 
             <dd className="truncate">{pool.owner.username}</dd>
           </Flex>
 
           <Flex className="items-center justify-between gap-3">
-            <dt className="text-zinc-400">Connected</dt>
+            <dt className="text-muted-foreground">Connected</dt>
 
             <dd>
               <time dateTime={pool.createdAt}>
@@ -147,14 +147,14 @@ export default function AgentsPoolCard({
           </Flex>
 
           <Flex className="items-center justify-between gap-3">
-            <dt className="text-zinc-400">Status</dt>
+            <dt className="text-muted-foreground">Status</dt>
 
             <dd>{agentPoolAvailabilityLabel(pool)}</dd>
           </Flex>
         </dl>
       </div>
 
-      <footer className="flex items-center justify-between gap-3 border-t border-zinc-100 bg-zinc-50/60 px-5 py-3">
+      <footer className="flex items-center justify-between gap-3 border-t border-border bg-muted/60 px-5 py-3">
         <AgentsAvatarStack people={pool.members} />
 
         <Button

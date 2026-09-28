@@ -8,8 +8,8 @@ const dailyBar = tv({
   base: "w-full max-w-3 rounded-t-sm",
   variants: {
     peak: {
-      true: "bg-indigo-500",
-      false: "bg-indigo-300",
+      true: "bg-primary",
+      false: "bg-primary/40",
     },
   },
 });
@@ -25,8 +25,8 @@ export default function OrganizationUsageChart({
 
   if (days.length === 0 || days.every((day) => day.requests === 0)) {
     return (
-      <Center className="min-h-32 rounded-lg border border-dashed border-zinc-200 bg-zinc-50/50 px-4">
-        <p className="text-center text-xs text-zinc-500">
+      <Center className="min-h-32 rounded-lg border border-dashed border-border bg-muted/50 px-4">
+        <p className="text-center text-xs text-muted-foreground">
           No requests recorded in this period.
         </p>
       </Center>
@@ -37,7 +37,7 @@ export default function OrganizationUsageChart({
     <figure>
       <ol
         aria-label="Requests by day"
-        className="relative flex h-32 items-end gap-0.5 overflow-hidden border-b border-zinc-200 bg-[linear-gradient(to_bottom,transparent_24%,#f4f4f5_25%,transparent_26%,transparent_49%,#f4f4f5_50%,transparent_51%,transparent_74%,#f4f4f5_75%,transparent_76%)]"
+        className="relative flex h-32 items-end gap-0.5 overflow-hidden border-b border-border bg-[linear-gradient(to_bottom,transparent_24%,var(--color-border)_25%,transparent_26%,transparent_49%,var(--color-border)_50%,transparent_51%,transparent_74%,var(--color-border)_75%,transparent_76%)]"
       >
         {days.map((day) => {
           const height =
@@ -62,22 +62,22 @@ export default function OrganizationUsageChart({
           );
         })}
       </ol>
-      <figcaption className="mt-2 space-y-1 text-[11px] text-zinc-400">
+      <figcaption className="mt-2 space-y-1 text-[11px] text-muted-foreground">
         <Flex className="justify-between gap-2">
           <time dateTime={days[0]?.date}>{days[0]?.date}</time>
           <time dateTime={days.at(-1)?.date}>{days.at(-1)?.date}</time>
         </Flex>
         <details>
-          <summary className="inline-flex min-h-9 cursor-pointer items-center rounded text-zinc-600 underline decoration-zinc-300 underline-offset-4 hover:text-zinc-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500">
+          <summary className="inline-flex min-h-9 cursor-pointer items-center rounded text-muted-foreground underline decoration-border underline-offset-4 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
             Daily values
           </summary>
-          <dl className="max-h-44 space-y-1 overflow-y-auto rounded-lg border border-zinc-200 bg-zinc-50 p-2">
+          <dl className="max-h-44 space-y-1 overflow-y-auto rounded-lg border border-border bg-muted p-2">
             {days.map((day) => (
               <Flex key={day.date} className="justify-between gap-4">
                 <dt>
                   <time dateTime={day.date}>{day.date}</time>
                 </dt>
-                <dd className="font-mono text-zinc-700">
+                <dd className="font-mono text-muted-foreground">
                   {day.requests} requests
                 </dd>
               </Flex>

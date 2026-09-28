@@ -383,7 +383,7 @@ export default function PlaygroundWorkspace({
       className="space-y-5"
       onSubmit={(event) => void form.handleSubmit(submit)(event)}
     >
-      <section className="space-y-4 rounded-xl border border-border bg-white p-5">
+      <section className="space-y-4 rounded-xl border border-border bg-card p-5">
         <header>
           <h2 className="text-sm font-semibold">Setup</h2>
         </header>
@@ -406,7 +406,7 @@ export default function PlaygroundWorkspace({
               value={organizationId || "personal"}
             >
               <SelectTrigger
-                className="h-11! w-full min-w-0 bg-white"
+                className="h-11! w-full min-w-0 bg-background"
                 id="playground-organization"
               >
                 <SelectValue />
@@ -451,7 +451,7 @@ export default function PlaygroundWorkspace({
               value={provider}
             >
               <SelectTrigger
-                className="h-11! w-full min-w-0 bg-white"
+                className="h-11! w-full min-w-0 bg-background"
                 id="playground-provider"
               >
                 <SelectValue />
@@ -484,7 +484,7 @@ export default function PlaygroundWorkspace({
               value={selectedAccount?.id ?? ""}
             >
               <SelectTrigger
-                className="h-11! w-full min-w-0 bg-white"
+                className="h-11! w-full min-w-0 bg-background"
                 id="playground-account"
               >
                 <SelectValue
@@ -521,7 +521,7 @@ export default function PlaygroundWorkspace({
               value={selectedModel?.id ?? ""}
             >
               <SelectTrigger
-                className="h-11! w-full min-w-0 bg-white"
+                className="h-11! w-full min-w-0 bg-background"
                 id="playground-model"
               >
                 <SelectValue
@@ -573,7 +573,7 @@ export default function PlaygroundWorkspace({
         ) : null}
       </section>
 
-      <section className="flex h-[calc(100svh-18rem)] min-h-112 max-h-192 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-white">
+      <section className="flex h-[calc(100svh-18rem)] min-h-112 max-h-192 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card">
         <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
           <h2 className="text-sm font-semibold">Your conversation</h2>
 
@@ -603,7 +603,7 @@ export default function PlaygroundWorkspace({
             <Center className="h-full flex-col gap-4 text-center">
               <FlaskConical
                 aria-hidden="true"
-                className="size-7 text-zinc-400"
+                className="size-7 text-muted-foreground"
               />
 
               <div className="space-y-2">
@@ -620,7 +620,7 @@ export default function PlaygroundWorkspace({
             <div className="space-y-6">
               {turns.map((turn) => (
                 <article key={turn.id} className="space-y-4">
-                  <div className="space-y-2 rounded-lg bg-zinc-50 p-3">
+                  <div className="space-y-2 rounded-lg bg-muted p-3">
                     <h3 className="text-xs font-medium text-muted-foreground">
                       You
                     </h3>
@@ -753,7 +753,7 @@ export default function PlaygroundWorkspace({
           <div
             role="group"
             aria-label="Message composer"
-            className="min-h-14 rounded-xl border border-input bg-white p-2 focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50"
+            className="min-h-14 rounded-xl border border-input bg-background p-2 focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50"
           >
             {attachments.length ? (
               <ul

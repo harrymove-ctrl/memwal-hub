@@ -6,7 +6,7 @@ import type { AgentProvider } from "@/services/agent-pools";
 const link = tv({
   base: "fill-none transition-colors",
   variants: {
-    highlighted: { true: "stroke-indigo-500", false: "stroke-zinc-300" },
+    highlighted: { true: "stroke-indigo-500", false: "stroke-muted-foreground" },
   },
 });
 

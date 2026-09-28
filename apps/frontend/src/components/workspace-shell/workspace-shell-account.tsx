@@ -22,10 +22,10 @@ export default function WorkspaceShellAccount({
 
   if (session.user) {
     return (
-      <Flex className="mt-6 justify-between rounded-xl border border-zinc-200 bg-zinc-50 p-2.5">
+      <Flex className="mt-6 justify-between rounded-xl border border-border bg-muted p-2.5">
         <Flex className="min-w-0 gap-2">
           <Avatar size="sm">
-            <AvatarFallback className="bg-zinc-900 text-[10px] text-white">
+            <AvatarFallback className="bg-primary text-[10px] text-primary-foreground">
               {session.user.username.slice(0, 3)}
             </AvatarFallback>
           </Avatar>

@@ -106,7 +106,7 @@ export default function OrganizationMembersRoute() {
         <h1 className="font-heading text-2xl font-semibold tracking-tight">
           Members
         </h1>
-        <p className="mt-1 text-xs text-zinc-500">
+        <p className="mt-1 text-xs text-muted-foreground">
           People with access to {organization.name}.
         </p>
       </header>
@@ -125,46 +125,45 @@ export default function OrganizationMembersRoute() {
           withAside: organization.role === "owner" || pending.length > 0,
         })}
       >
-        <section className="min-w-0 rounded-xl border border-zinc-200 bg-white shadow-xs">
-          <header className="flex items-center justify-between gap-3 border-b border-zinc-100 px-4 py-3.5 sm:px-5">
+        <section className="min-w-0 rounded-xl border border-border bg-card shadow-xs">
+          <header className="flex items-center justify-between gap-3 border-b border-border px-4 py-3.5 sm:px-5">
             <div>
               <h2 className="font-heading text-sm font-semibold">
                 Active members
               </h2>
-              <p className="mt-0.5 text-[11px] text-zinc-500">
+              <p className="mt-0.5 text-[11px] text-muted-foreground">
                 Everyone currently in this organization
               </p>
             </div>
-            <p className="rounded-full bg-zinc-100 px-2.5 py-1 font-mono text-[11px] text-zinc-600">
+            <p className="rounded-full bg-muted px-2.5 py-1 font-mono text-[11px] text-muted-foreground">
               {formatCount(active.length)} active
             </p>
           </header>
-
           {membersQuery.isPending ? (
-            <p className="p-5 text-xs text-zinc-500">Loading members…</p>
+            <p className="p-5 text-xs text-muted-foreground">Loading members…</p>
           ) : active.length ? (
-            <ul className="divide-y divide-zinc-100 px-4 sm:px-5">
+            <ul className="divide-y divide-border px-4 sm:px-5">
               {active.map((member) => (
                 <li
                   key={member.id}
                   className="grid grid-cols-[2rem_minmax(0,1fr)] items-center gap-x-3 gap-y-2 py-3 sm:grid-cols-[2rem_minmax(0,1fr)_auto]"
                 >
-                  <Center className="size-8 rounded-lg bg-zinc-100 font-mono text-[10px] font-semibold text-zinc-600 uppercase">
+                  <Center className="size-8 rounded-lg bg-muted font-mono text-[10px] font-semibold text-muted-foreground uppercase">
                     {member.username.slice(0, 2)}
                   </Center>
 
                   <div className="min-w-0">
                     <Flex className="flex-wrap gap-2">
-                      <p className="truncate text-xs font-semibold text-zinc-900">
+                      <p className="truncate text-xs font-semibold text-foreground">
                         @{member.username}
                       </p>
-                      <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] leading-tight text-zinc-500 capitalize">
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] leading-tight text-muted-foreground capitalize">
                         {member.role}
                       </span>
                     </Flex>
-                    <p className="mt-1 text-[11px] text-zinc-500">
+                    <p className="mt-1 text-[11px] text-muted-foreground">
                       {joinedLabel(member.joinedAt)} ·{" "}
-                      <strong className="font-medium text-zinc-700">
+                      <strong className="font-medium text-foreground">
                         {formatCount(requestsByMember.get(member.id) ?? 0)}
                       </strong>{" "}
                       requests in 30 days
@@ -197,7 +196,7 @@ export default function OrganizationMembersRoute() {
               ))}
             </ul>
           ) : (
-            <p className="p-5 text-xs text-zinc-500">
+            <p className="p-5 text-xs text-muted-foreground">
               No active members are available yet.
             </p>
           )}
@@ -207,14 +206,14 @@ export default function OrganizationMembersRoute() {
           <aside className="space-y-4">
             {organization.role === "owner" ? (
               <form
-                className="space-y-3 rounded-xl border border-indigo-100 bg-indigo-50/40 p-4 sm:p-5"
+                className="space-y-3 rounded-xl border border-primary/20 bg-primary/10 p-4 sm:p-5"
                 onSubmit={form.handleSubmit(invite)}
               >
                 <div>
-                  <h2 className="font-heading text-sm font-semibold text-zinc-900">
+                  <h2 className="font-heading text-sm font-semibold text-foreground">
                     Invite a member
                   </h2>
-                  <p className="mt-1 text-zinc-500 text-xs/relaxed">
+                  <p className="mt-1 text-muted-foreground text-xs/relaxed">
                     Invite an existing Bew Harness username to this team.
                   </p>
                 </div>
@@ -230,7 +229,7 @@ export default function OrganizationMembersRoute() {
                     id="organization-invite-username"
                     autoComplete="off"
                     aria-invalid={Boolean(form.formState.errors.username)}
-                    className="h-9 bg-white"
+                    className="h-9 bg-background"
                     placeholder="username"
                     {...form.register("username")}
                   />
@@ -262,23 +261,23 @@ export default function OrganizationMembersRoute() {
             ) : null}
 
             {pending.length > 0 ? (
-              <section className="rounded-xl border border-zinc-200 bg-white p-4 shadow-xs sm:p-5">
+              <section className="rounded-xl border border-border bg-card p-4 shadow-xs sm:p-5">
                 <Flex className="justify-between gap-3">
                   <h2 className="font-heading text-sm font-semibold">
                     Pending invitations
                   </h2>
-                  <p className="font-mono text-[11px] text-zinc-500">
+                  <p className="font-mono text-[11px] text-muted-foreground">
                     {pending.length}
                   </p>
                 </Flex>
 
-                <ul className="mt-2 divide-y divide-zinc-100">
+                <ul className="mt-2 divide-y divide-border">
                   {pending.map((member) => (
                     <li
                       key={member.id}
                       className="flex flex-wrap items-center justify-between gap-2 py-2.5"
                     >
-                      <p className="text-xs font-medium text-zinc-700">
+                      <p className="text-xs font-medium text-foreground">
                         @{member.username}
                       </p>
                       {organization.role === "owner" ? (

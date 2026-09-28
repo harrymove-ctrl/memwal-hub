@@ -19,11 +19,11 @@ const navigationLinkVariants = tv({
   base: "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-xs font-medium tracking-wide transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden",
   variants: {
     active: {
-      true: "bg-zinc-900 text-white shadow-xs",
-      false: "text-muted-foreground hover:bg-zinc-100/80 hover:text-foreground",
+      true: "bg-primary text-primary-foreground shadow-xs",
+      false: "text-muted-foreground hover:bg-muted/80 hover:text-foreground",
     },
     disabled: {
-      true: "cursor-not-allowed text-zinc-400 hover:bg-transparent hover:text-zinc-400",
+      true: "cursor-not-allowed text-muted-foreground hover:bg-transparent hover:text-muted-foreground",
     },
   },
 });
@@ -31,8 +31,8 @@ const navigationLinkVariants = tv({
 const navigationIconVariants = tv({
   base: "size-4",
   variants: {
-    active: { true: "text-white", false: "text-zinc-500" },
-    disabled: { true: "text-zinc-300" },
+    active: { true: "text-primary-foreground", false: "text-muted-foreground" },
+    disabled: { true: "text-muted-foreground" },
   },
 });
 
@@ -61,7 +61,7 @@ function WorkspaceBrand({ onNavigate }: WorkspaceBrandProps) {
           <p className="text-xs">Bew-Harness</p>
         </Center>
 
-        <div className="rounded border border-zinc-200/80 bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] text-zinc-700">
+        <div className="rounded border border-border/80 bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground">
           v1.4
         </div>
       </Center>
@@ -202,7 +202,7 @@ export default function WorkspaceShellSidebar({
 }: WorkspaceShellSidebarProps) {
   return (
     <div className="flex h-full flex-col p-4">
-      <div className="mb-4 border-b border-zinc-100 pb-6">
+      <div className="mb-4 border-b border-border pb-6">
         <WorkspaceBrand onNavigate={onNavigate} />
       </div>
 

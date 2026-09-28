@@ -71,7 +71,7 @@ export default function AgentsRequestDialog({
     <Dialog open={open} onOpenChange={changeOpen}>
       <FocusReturnDialogContent>
         <DialogHeader>
-          <Center className="mb-1 size-10 rounded-xl border border-indigo-200 bg-indigo-50 text-indigo-600">
+          <Center className="mb-1 size-10 rounded-xl border border-primary/25 bg-primary/10 text-primary">
             <Send aria-hidden="true" className="size-5" />
           </Center>
 
@@ -117,7 +117,7 @@ export default function AgentsRequestDialog({
             ) : null}
           </div>
 
-          <p className="rounded-lg bg-zinc-50 p-2.5 text-xs/relaxed text-muted-foreground">
+          <p className="rounded-lg bg-muted p-2.5 text-xs/relaxed text-muted-foreground">
             Bew Harness only lists sharing availability. Any bill splitting or
             payment conversation happens directly on Telegram.
           </p>

@@ -24,14 +24,14 @@ export default function AgentsAvatarStack({
     <AvatarGroup>
       {visiblePeople.map((person) => (
         <Avatar key={person.username} size="sm">
-          <AvatarFallback className="bg-zinc-900 text-[9px] font-semibold text-white">
+          <AvatarFallback className="bg-primary text-[9px] font-semibold text-primary-foreground">
             {person.avatarLabel}
             <span className="sr-only">{person.username}</span>
           </AvatarFallback>
         </Avatar>
       ))}
       {remaining > 0 ? (
-        <AvatarGroupCount className="bg-zinc-200 text-[9px] font-bold text-zinc-700">
+        <AvatarGroupCount className="bg-muted text-[9px] font-bold text-foreground">
           +{remaining}
         </AvatarGroupCount>
       ) : null}

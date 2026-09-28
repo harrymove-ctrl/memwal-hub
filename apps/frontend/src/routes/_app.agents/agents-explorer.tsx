@@ -28,12 +28,12 @@ import AgentsPoolCard from "./agents-pool-card";
 import AgentsPoolCardSkeleton from "./agents-pool-card-skeleton";
 
 const providerButton = tv({
-  base: "relative z-10 flex min-h-12 shrink-0 items-center gap-2.5 rounded-xl border px-3 text-left text-xs transition-colors focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-indigo-500 lg:w-full",
+  base: "relative z-10 flex min-h-12 shrink-0 items-center gap-2.5 rounded-xl border px-3 text-left text-xs transition-colors focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary lg:w-full",
   variants: {
     selected: {
-      true: "border-indigo-200 bg-indigo-50 text-indigo-700",
+      true: "border-primary/25 bg-primary/10 text-primary",
       false:
-        "border-transparent bg-background text-zinc-600 hover:border-zinc-200 hover:bg-white",
+        "border-transparent bg-background text-muted-foreground hover:border-border hover:bg-card",
     },
   },
 });
@@ -113,7 +113,7 @@ export default function AgentsExplorer({
             aria-label="Agent providers"
             className="min-w-0 lg:sticky lg:top-0 lg:z-20 lg:bg-background"
           >
-            <h2 className="relative z-10 mb-4 text-[10px] font-semibold tracking-widest text-zinc-400 uppercase">
+            <h2 className="relative z-10 mb-4 text-[10px] font-semibold tracking-widest text-muted-foreground uppercase">
               Providers
             </h2>
 
@@ -125,11 +125,11 @@ export default function AgentsExplorer({
                     aria-hidden="true"
                     className="min-h-12 min-w-32 items-center gap-2.5 rounded-xl px-3"
                   >
-                    <div className="size-6 shrink-0 animate-pulse rounded-md bg-zinc-200" />
+                    <div className="size-6 shrink-0 animate-pulse rounded-md bg-muted" />
 
-                    <div className="h-3 w-16 animate-pulse rounded bg-zinc-200" />
+                    <div className="h-3 w-16 animate-pulse rounded bg-muted" />
 
-                    <div className="ml-auto size-3 animate-pulse rounded bg-zinc-200" />
+                    <div className="ml-auto size-3 animate-pulse rounded bg-muted" />
                   </Flex>
                 ) : (
                   <button
@@ -166,18 +166,18 @@ export default function AgentsExplorer({
                 {loading ? (
                   <div
                     aria-hidden="true"
-                    className="h-10 w-full animate-pulse rounded-lg bg-zinc-200/70"
+                    className="h-10 w-full animate-pulse rounded-lg bg-muted/70"
                   />
                 ) : (
                   <>
                     <Search
                       aria-hidden="true"
-                      className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-zinc-400"
+                      className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground"
                     />
 
                     <Input
                       aria-label="Search accounts"
-                      className="h-10 w-full bg-white pl-9 text-xs"
+                      className="h-10 w-full bg-background pl-9 text-xs"
                       placeholder="Search accounts…"
                       value={query}
                       onChange={(event) => setQuery(event.target.value)}
@@ -189,7 +189,7 @@ export default function AgentsExplorer({
               {loading ? (
                 <div
                   aria-hidden="true"
-                  className="h-10 w-28 shrink-0 animate-pulse rounded-lg bg-zinc-200/70"
+                  className="h-10 w-28 shrink-0 animate-pulse rounded-lg bg-muted/70"
                 />
               ) : (
                 <Select
@@ -198,7 +198,7 @@ export default function AgentsExplorer({
                 >
                   <SelectTrigger
                     aria-label="Filter accounts"
-                    className="h-10! w-32 shrink-0 bg-white text-xs"
+                    className="h-10! w-32 shrink-0 bg-background text-xs"
                   >
                     <SelectValue />
                   </SelectTrigger>
@@ -212,7 +212,7 @@ export default function AgentsExplorer({
             </Flex>
 
             {!loading && filteredPools.length === 0 ? (
-              <p className="relative z-10 rounded-xl border border-dashed border-zinc-200 bg-background p-5 text-xs/relaxed text-zinc-500">
+              <p className="relative z-10 rounded-xl border border-dashed border-border bg-background p-5 text-xs/relaxed text-muted-foreground">
                 No accounts match. Try another provider or filter.
               </p>
             ) : null}

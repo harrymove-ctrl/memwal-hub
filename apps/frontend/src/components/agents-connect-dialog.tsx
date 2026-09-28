@@ -98,7 +98,7 @@ function AgentProviderOption({
         variant="outline"
       >
         <Flex className="items-center gap-3">
-          <Center className="size-8 rounded-lg bg-slate-100 text-slate-700">
+          <Center className="size-8 rounded-lg bg-muted text-foreground">
             <Bot aria-hidden="true" className="size-4" />
           </Center>
           <span>{label}</span>
@@ -403,7 +403,7 @@ export default function AgentsConnectDialog({
 
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <Center className="mb-1 size-10 rounded-xl border border-indigo-200 bg-indigo-50 text-indigo-600">
+          <Center className="mb-1 size-10 rounded-xl border border-primary/25 bg-primary/10 text-primary">
             <Bot aria-hidden="true" className="size-5" />
           </Center>
           <DialogTitle>Connect an agent account</DialogTitle>
@@ -415,7 +415,7 @@ export default function AgentsConnectDialog({
         </DialogHeader>
 
         {onAddExisting && availableConnections.length > 0 ? (
-          <section className="space-y-2 border-b border-zinc-200 pb-4">
+          <section className="space-y-2 border-b border-border pb-4">
             <h3 className="text-sm font-semibold">Share a connected agent</h3>
             <p className="text-xs text-muted-foreground">
               Add your existing account without signing in again. Its current

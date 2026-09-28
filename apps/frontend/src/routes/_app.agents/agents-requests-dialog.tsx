@@ -271,7 +271,7 @@ export default function AgentsRequestsDialog({
     <Dialog open={open} onOpenChange={changeOpen}>
       <FocusReturnDialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <Center className="mb-1 size-10 rounded-xl border border-indigo-200 bg-indigo-50 text-indigo-600">
+          <Center className="mb-1 size-10 rounded-xl border border-primary/25 bg-primary/10 text-primary">
             <UsersRound aria-hidden="true" className="size-5" />
           </Center>
 
@@ -470,17 +470,17 @@ export default function AgentsRequestsDialog({
               {requests.map((request) => (
                 <li
                   key={request.id}
-                  className="rounded-xl border border-zinc-200 p-3"
+                  className="rounded-xl border border-border p-3"
                 >
                   <Flex className="items-start gap-3">
                     <Avatar>
-                      <AvatarFallback className="bg-zinc-900 text-[10px] font-semibold text-white">
+                      <AvatarFallback className="bg-primary text-[10px] font-semibold text-primary-foreground">
                         {request.avatarLabel}
                       </AvatarFallback>
                     </Avatar>
                     <div className="min-w-0 flex-1">
                       <p className="font-semibold">{request.username}</p>
-                      <p className="font-mono text-[11px] text-indigo-600">
+                      <p className="font-mono text-[11px] text-primary">
                         {request.telegram}
                       </p>
                       <p className="mt-2 text-xs/relaxed text-muted-foreground">
@@ -516,7 +516,7 @@ export default function AgentsRequestsDialog({
               ))}
             </ul>
           ) : (
-            <p className="rounded-xl bg-zinc-50 p-5 text-center text-sm text-muted-foreground">
+            <p className="rounded-xl bg-muted p-5 text-center text-sm text-muted-foreground">
               No pending requests match this search.
             </p>
           )}
@@ -572,11 +572,11 @@ export default function AgentsRequestsDialog({
               {members.map((member) => (
                 <li
                   key={member.username}
-                  className="rounded-xl border border-zinc-200 p-3"
+                  className="rounded-xl border border-border p-3"
                 >
                   <Flex className="items-center gap-3">
                     <Avatar>
-                      <AvatarFallback className="bg-zinc-900 text-[10px] font-semibold text-white">
+                      <AvatarFallback className="bg-primary text-[10px] font-semibold text-primary-foreground">
                         {member.avatarLabel}
                       </AvatarFallback>
                     </Avatar>

@@ -29,7 +29,7 @@ const agentStatusDot = tv({
   variants: {
     active: {
       true: "bg-emerald-500",
-      false: "bg-zinc-400",
+      false: "bg-muted-foreground",
     },
   },
 });
@@ -58,7 +58,7 @@ export default function OrganizationOverviewRoute() {
           <h1 className="font-heading text-2xl font-semibold tracking-tight">
             Overview
           </h1>
-          <p className="mt-1 text-xs text-zinc-500">
+          <p className="mt-1 text-xs text-muted-foreground">
             {organization.description ||
               `A quick view of activity across ${organization.name}.`}
           </p>
@@ -69,7 +69,7 @@ export default function OrganizationOverviewRoute() {
         >
           <SelectTrigger
             aria-label="Time range"
-            className="h-9! min-w-32 bg-white text-xs"
+            className="h-9! min-w-32 bg-background text-xs"
           >
             <SelectValue />
           </SelectTrigger>
@@ -121,32 +121,32 @@ export default function OrganizationOverviewRoute() {
       />
 
       <div className="grid items-stretch gap-4 lg:grid-cols-[minmax(0,1.45fr)_minmax(18rem,0.9fr)]">
-        <section className="min-w-0 rounded-xl border border-zinc-200 bg-white p-4 shadow-xs sm:p-5">
+        <section className="min-w-0 rounded-xl border border-border bg-card p-4 shadow-xs sm:p-5">
           <div className="mb-5">
-            <h2 className="font-heading text-sm font-semibold text-zinc-900">
+            <h2 className="font-heading text-sm font-semibold text-foreground">
               Daily usage
             </h2>
-            <p className="mt-1 text-xs text-zinc-500">
+            <p className="mt-1 text-xs text-muted-foreground">
               Requests made through this organization.
             </p>
           </div>
 
           {overviewQuery.isPending ? (
             <Center className="min-h-32">
-              <p className="text-xs text-zinc-500">Loading usage…</p>
+              <p className="text-xs text-muted-foreground">Loading usage…</p>
             </Center>
           ) : (
             <OrganizationUsageChart days={overview?.dailyUsage ?? []} />
           )}
         </section>
 
-        <section className="min-w-0 rounded-xl border border-zinc-200 bg-white p-4 shadow-xs sm:p-5">
+        <section className="min-w-0 rounded-xl border border-border bg-card p-4 shadow-xs sm:p-5">
           <Flex className="flex-wrap items-center justify-between gap-3">
-            <h2 className="font-heading text-sm font-semibold text-zinc-900">
+            <h2 className="font-heading text-sm font-semibold text-foreground">
               Team agents
             </h2>
             <Link
-              className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden"
+              className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden"
               to="/organization/agents"
             >
               View Agents <ArrowRight aria-hidden="true" className="size-3.5" />
@@ -154,23 +154,23 @@ export default function OrganizationOverviewRoute() {
           </Flex>
 
           {overview?.agents.length ? (
-            <ul className="mt-3 divide-y divide-zinc-100">
+            <ul className="mt-3 divide-y divide-border">
               {overview.agents.map((agent) => (
                 <li key={agent.id} className="flex items-center gap-3 py-2.5">
-                  <Center className="size-8 shrink-0 rounded-lg border border-zinc-200 bg-zinc-50 font-mono text-xs font-semibold text-zinc-600">
+                  <Center className="size-8 shrink-0 rounded-lg border border-border bg-muted font-mono text-xs font-semibold text-muted-foreground">
                     {providerLabel(agent.provider).slice(0, 1)}
                   </Center>
 
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs font-semibold text-zinc-800">
+                    <p className="truncate text-xs font-semibold text-foreground">
                       {providerLabel(agent.provider)}
                     </p>
-                    <p className="truncate text-[11px] text-zinc-500">
+                    <p className="truncate text-[11px] text-muted-foreground">
                       Added by @{agent.ownerUsername}
                     </p>
                   </div>
 
-                  <p className="inline-flex shrink-0 items-center gap-1.5 text-[11px] text-zinc-500">
+                  <p className="inline-flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
                     <span
                       aria-hidden="true"
                       className={agentStatusDot({
@@ -183,7 +183,7 @@ export default function OrganizationOverviewRoute() {
               ))}
             </ul>
           ) : (
-            <p className="mt-4 rounded-lg border border-dashed border-zinc-200 bg-zinc-50/50 p-4 text-xs text-zinc-500">
+            <p className="mt-4 rounded-lg border border-dashed border-border bg-muted/50 p-4 text-xs text-muted-foreground">
               No agents shared with this organization yet.
             </p>
           )}

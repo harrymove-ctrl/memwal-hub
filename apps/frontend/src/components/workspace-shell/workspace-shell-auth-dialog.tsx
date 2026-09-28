@@ -107,7 +107,7 @@ export default function WorkspaceShellAuthDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <FocusReturnDialogContent>
         <DialogHeader className="items-center text-center">
-          <Center className="mb-1 size-10 rounded-xl border border-indigo-200 bg-indigo-50 text-indigo-600">
+          <Center className="mb-1 size-10 rounded-xl border border-primary/25 bg-primary/10 text-primary">
             <KeyRound aria-hidden="true" className="size-5" />
           </Center>
 

@@ -6,7 +6,7 @@ const progress = tv({
     track:
       "pointer-events-none fixed inset-x-0 top-0 z-100 h-0.5 transition-opacity duration-150",
     indicator:
-      "size-full origin-left bg-indigo-500 transition-transform duration-200 ease-out",
+      "size-full origin-left bg-primary transition-transform duration-200 ease-out",
   },
   variants: {
     pending: {

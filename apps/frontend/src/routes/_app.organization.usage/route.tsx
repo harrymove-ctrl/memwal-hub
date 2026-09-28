@@ -132,20 +132,20 @@ export default function OrganizationUsageRoute() {
         <h1 className="font-heading text-2xl font-semibold tracking-tight">
           Usage
         </h1>
-        <p className="mt-1 text-xs text-zinc-500">
+        <p className="mt-1 text-xs text-muted-foreground">
           Requests made through {organization.name}, broken down by member,
           agent and model.
         </p>
       </header>
 
-      <section className="rounded-xl border border-zinc-200 bg-white p-4 shadow-xs">
-        <h2 className="mb-3 text-[11px] font-semibold tracking-wide text-zinc-500 uppercase">
+      <section className="rounded-xl border border-border bg-card p-4 shadow-xs">
+        <h2 className="mb-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
           Filters
         </h2>
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <div className="min-w-0 space-y-1">
             <Label
-              className="text-[11px] text-zinc-500"
+              className="text-[11px] text-muted-foreground"
               htmlFor="usage-time-range"
             >
               Time range
@@ -158,7 +158,7 @@ export default function OrganizationUsageRoute() {
               value={String(days)}
             >
               <SelectTrigger
-                className="h-9! w-full min-w-0 bg-white text-xs"
+                className="h-9! w-full min-w-0 bg-background text-xs"
                 id="usage-time-range"
               >
                 <SelectValue />
@@ -171,7 +171,7 @@ export default function OrganizationUsageRoute() {
             </Select>
           </div>
           <div className="min-w-0 space-y-1">
-            <Label className="text-[11px] text-zinc-500" htmlFor="usage-member">
+            <Label className="text-[11px] text-muted-foreground" htmlFor="usage-member">
               Member
             </Label>
             <Select
@@ -181,7 +181,7 @@ export default function OrganizationUsageRoute() {
               value={memberId || "all"}
             >
               <SelectTrigger
-                className="h-9! w-full min-w-0 bg-white text-xs"
+                className="h-9! w-full min-w-0 bg-background text-xs"
                 id="usage-member"
               >
                 <SelectValue />
@@ -206,7 +206,7 @@ export default function OrganizationUsageRoute() {
             </Select>
           </div>
           <div className="min-w-0 space-y-1">
-            <Label className="text-[11px] text-zinc-500" htmlFor="usage-agent">
+            <Label className="text-[11px] text-muted-foreground" htmlFor="usage-agent">
               Agent
             </Label>
             <Select
@@ -216,7 +216,7 @@ export default function OrganizationUsageRoute() {
               value={validConnectionId || "all"}
             >
               <SelectTrigger
-                className="h-9! w-full min-w-0 bg-white text-xs"
+                className="h-9! w-full min-w-0 bg-background text-xs"
                 id="usage-agent"
               >
                 <SelectValue />
@@ -232,7 +232,7 @@ export default function OrganizationUsageRoute() {
             </Select>
           </div>
           <div className="min-w-0 space-y-1">
-            <Label className="text-[11px] text-zinc-500" htmlFor="usage-model">
+            <Label className="text-[11px] text-muted-foreground" htmlFor="usage-model">
               Model
             </Label>
             <Select
@@ -242,7 +242,7 @@ export default function OrganizationUsageRoute() {
               value={validModel ? `model:${validModel}` : "all"}
             >
               <SelectTrigger
-                className="h-9! w-full min-w-0 bg-white text-xs"
+                className="h-9! w-full min-w-0 bg-background text-xs"
                 id="usage-model"
               >
                 <SelectValue />
@@ -327,16 +327,16 @@ export default function OrganizationUsageRoute() {
         ]}
       />
 
-      <section className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xs">
-        <div className="border-b border-zinc-100 p-4 sm:p-5">
+      <section className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
+        <div className="border-b border-border p-4 sm:p-5">
           <h2 className="font-heading text-sm font-semibold">Daily usage</h2>
-          <p className="mt-1 mb-4 text-xs text-zinc-500">
+          <p className="mt-1 mb-4 text-xs text-muted-foreground">
             {filtered
               ? "Requests matching your filters."
               : "All organization requests."}
           </p>
           {usageQuery.isPending ? (
-            <p className="py-10 text-center text-xs text-zinc-500">
+            <p className="py-10 text-center text-xs text-muted-foreground">
               Loading usage…
             </p>
           ) : (
@@ -354,14 +354,14 @@ export default function OrganizationUsageRoute() {
                 {usage.breakdown.map((row) => (
                   <li
                     key={`${row.memberId}:${row.connectionId}:${row.model}`}
-                    className="rounded-lg border border-zinc-200 bg-zinc-50/40 p-3"
+                    className="rounded-lg border border-border bg-muted/40 p-3"
                   >
                     <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3">
                       <div className="min-w-0">
-                        <p className="truncate text-xs font-semibold text-zinc-800">
+                        <p className="truncate text-xs font-semibold text-foreground">
                           @{row.username}
                         </p>
-                        <p className="mt-0.5 truncate text-[11px] text-zinc-500">
+                        <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
                           {providerLabel(row.provider)}
                           {row.connectionId && agentsById.has(row.connectionId)
                             ? ` · @${agentsById.get(row.connectionId)?.ownerUsername}`
@@ -373,19 +373,19 @@ export default function OrganizationUsageRoute() {
                         <p className="font-heading text-lg leading-none font-semibold">
                           {formatCount(row.requests)}
                         </p>
-                        <p className="mt-1 text-[10px] text-zinc-500">
+                        <p className="mt-1 text-[10px] text-muted-foreground">
                           requests
                         </p>
                       </div>
                     </div>
 
-                    <p className="mt-2 truncate rounded-md bg-white px-2 py-1 font-mono text-[11px] text-zinc-700">
+                    <p className="mt-2 truncate rounded-md bg-background px-2 py-1 font-mono text-[11px] text-muted-foreground">
                       {row.model ?? "Unknown model"}
                     </p>
 
-                    <dl className="mt-2 grid grid-cols-2 border-t border-zinc-200 pt-2 text-xs">
+                    <dl className="mt-2 grid grid-cols-2 border-t border-border pt-2 text-xs">
                       <div>
-                        <dt className="text-[10px] text-zinc-500">
+                        <dt className="text-[10px] text-muted-foreground">
                           Input tokens
                         </dt>
                         <dd className="mt-0.5 font-mono font-medium">
@@ -394,8 +394,8 @@ export default function OrganizationUsageRoute() {
                             : "—"}
                         </dd>
                       </div>
-                      <div className="border-l border-zinc-200 pl-3">
-                        <dt className="text-[10px] text-zinc-500">
+                      <div className="border-l border-border pl-3">
+                        <dt className="text-[10px] text-muted-foreground">
                           Output tokens
                         </dt>
                         <dd className="mt-0.5 font-mono font-medium">
@@ -464,7 +464,7 @@ export default function OrganizationUsageRoute() {
               </div>
             </>
           ) : (
-            <p className="mt-3 text-xs text-zinc-500">
+            <p className="mt-3 text-xs text-muted-foreground">
               No requests match this period and these filters.
             </p>
           )}

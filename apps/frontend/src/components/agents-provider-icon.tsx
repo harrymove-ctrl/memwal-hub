@@ -25,7 +25,7 @@ export default function AgentsProviderIcon({
         className="rounded-md object-contain"
       />
 
-      <AvatarFallback className="rounded-md bg-zinc-100 text-zinc-600">
+      <AvatarFallback className="rounded-md bg-muted text-muted-foreground">
         <Bot aria-hidden="true" className="size-4" />
       </AvatarFallback>
     </Avatar>

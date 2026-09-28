@@ -19,7 +19,7 @@ export default function AgentsUsageMetrics({
 }: AgentsUsageMetricsProps) {
   return (
     <section aria-label="Account usage" className="space-y-3">
-      <h4 className="text-[10px] font-semibold tracking-widest text-zinc-400 uppercase">
+      <h4 className="text-[10px] font-semibold tracking-widest text-muted-foreground uppercase">
         Usage & limits
       </h4>
 
@@ -30,7 +30,7 @@ export default function AgentsUsageMetrics({
             return (
               <div key={metric.label}>
                 <Flex className="items-center justify-between gap-3 text-xs">
-                  <dt className="text-zinc-600">{metric.label}</dt>
+                  <dt className="text-muted-foreground">{metric.label}</dt>
                   <dd className="text-right font-mono font-medium">
                     {agentPoolUsageValue(metric)}
                   </dd>
@@ -45,7 +45,7 @@ export default function AgentsUsageMetrics({
                 ) : null}
 
                 {metric.detail && metric.value !== "Unavailable" ? (
-                  <Flex className="mt-2 items-start gap-1.5 text-[10px]/relaxed text-zinc-500">
+                  <Flex className="mt-2 items-start gap-1.5 text-[10px]/relaxed text-muted-foreground">
                     <Clock3
                       aria-hidden="true"
                       className="mt-0.5 size-3 shrink-0"
@@ -58,7 +58,7 @@ export default function AgentsUsageMetrics({
           })}
         </dl>
       ) : (
-        <p className="text-xs text-zinc-500">
+        <p className="text-xs text-muted-foreground">
           {provider} has not reported usage for this account yet.
         </p>
       )}

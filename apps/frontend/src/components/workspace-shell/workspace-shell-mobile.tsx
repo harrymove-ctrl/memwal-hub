@@ -69,9 +69,9 @@ export default function WorkspaceShellMobile() {
 
         <Link
           to="/"
-          className="flex items-center gap-1.5 rounded-md text-xs font-bold tracking-wider uppercase transition-colors hover:text-indigo-600 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden"
+          className="flex items-center gap-1.5 rounded-md text-xs font-bold tracking-wider uppercase transition-colors hover:text-primary focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden"
         >
-          <Center className="size-5 rounded bg-zinc-900 font-mono text-[10px] text-white">
+          <Center className="size-5 rounded bg-primary font-mono text-[10px] text-primary-foreground">
             W
           </Center>
           Bew-Harness

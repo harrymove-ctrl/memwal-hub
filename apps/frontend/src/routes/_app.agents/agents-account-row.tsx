@@ -19,11 +19,11 @@ import {
 import AgentsAvatarStack from "./agents-avatar-stack";
 
 const account = tv({
-  base: "relative z-10 grid w-full min-w-0 items-center gap-3 rounded-xl border bg-white p-4 text-left shadow-xs transition-colors focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-indigo-500 sm:grid-cols-[minmax(0,1fr)_auto]",
+  base: "relative z-10 grid w-full min-w-0 items-center gap-3 rounded-xl border bg-card p-4 text-left shadow-xs transition-colors focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary sm:grid-cols-[minmax(0,1fr)_auto]",
   variants: {
     selected: {
-      true: "border-indigo-300 ring-1 ring-indigo-100",
-      false: "border-zinc-200 hover:border-zinc-400",
+      true: "border-primary/40 ring-1 ring-primary/15",
+      false: "border-border hover:border-border",
     },
     warning: {
       true: "border-red-300 ring-red-100 hover:border-red-400",
@@ -67,19 +67,19 @@ export default function AgentsAccountRow({
           onClick={(event) => onOpen(event.currentTarget)}
         >
           <div className="min-w-0">
-            <p className="min-w-0 truncate font-mono text-xs font-semibold text-zinc-900">
+            <p className="min-w-0 truncate font-mono text-xs font-semibold text-foreground">
               {pool.accountLabel}
             </p>
-            <p className="mt-1 text-[11px] text-zinc-500">
+            <p className="mt-1 text-[11px] text-muted-foreground">
               {pool.agent} · {pool.plan} · {agentPoolAccessLabels[access]}
             </p>
             {tokens ? (
-              <p className="mt-2 text-[10px] text-zinc-500">{tokens}</p>
+              <p className="mt-2 text-[10px] text-muted-foreground">{tokens}</p>
             ) : null}
           </div>
 
           <Flex className="items-center gap-2 sm:justify-end">
-            <p className="text-[11px] text-zinc-500">Members</p>
+            <p className="text-[11px] text-muted-foreground">Members</p>
 
             <AgentsAvatarStack maxVisible={3} people={pool.members} />
           </Flex>

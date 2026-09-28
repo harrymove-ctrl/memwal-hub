@@ -41,7 +41,7 @@ export default function OrganizationAgentsRoute() {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-wrap items-end justify-between gap-4 border-b border-zinc-200/80 pb-5">
+      <header className="flex flex-wrap items-end justify-between gap-4 border-b border-border/80 pb-5">
         <div className="space-y-2">
           <h1 className="font-heading text-3xl font-bold tracking-tight">
             Agents

@@ -41,22 +41,22 @@ import {
 } from "@/utils/utils.agent-pools";
 
 const providerButton = tv({
-  base: "relative z-10 flex min-h-12 shrink-0 items-center gap-2.5 rounded-xl border px-3 text-left text-xs transition-colors focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-indigo-500 lg:w-full",
+  base: "relative z-10 flex min-h-12 shrink-0 items-center gap-2.5 rounded-xl border px-3 text-left text-xs transition-colors focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary lg:w-full",
   variants: {
     selected: {
-      true: "border-indigo-200 bg-indigo-50 text-indigo-700",
+      true: "border-primary/25 bg-primary/10 text-primary",
       false:
-        "border-transparent bg-background text-zinc-600 hover:border-zinc-200 hover:bg-white",
+        "border-transparent bg-background text-muted-foreground hover:border-border hover:bg-card",
     },
   },
 });
 
 const accountButton = tv({
-  base: "relative z-10 grid w-full min-w-0 items-center gap-3 rounded-xl border bg-white p-4 text-left shadow-xs transition-colors focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-indigo-500 sm:grid-cols-[minmax(0,1fr)_auto]",
+  base: "relative z-10 grid w-full min-w-0 items-center gap-3 rounded-xl border bg-card p-4 text-left shadow-xs transition-colors focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary sm:grid-cols-[minmax(0,1fr)_auto]",
   variants: {
     selected: {
-      true: "border-indigo-300 ring-1 ring-indigo-100",
-      false: "border-zinc-200 hover:border-zinc-400",
+      true: "border-primary/40 ring-1 ring-primary/15",
+      false: "border-border hover:border-primary/40",
     },
   },
 });
@@ -138,7 +138,7 @@ export default function OrganizationAgentsExplorer({
           />
 
           <nav aria-label="Agent providers" className="min-w-0">
-            <h2 className="relative z-10 mb-4 text-[10px] font-semibold tracking-widest text-zinc-400 uppercase">
+            <h2 className="relative z-10 mb-4 text-[10px] font-semibold tracking-widest text-muted-foreground uppercase">
               Providers
             </h2>
             <Flex className="flex-wrap gap-2 lg:flex-col">
@@ -177,11 +177,11 @@ export default function OrganizationAgentsExplorer({
               <div className="relative min-w-0 flex-1">
                 <Search
                   aria-hidden="true"
-                  className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-zinc-400"
+                  className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground"
                 />
                 <Input
                   aria-label="Search accounts"
-                  className="h-10 w-full bg-white pl-9 text-xs"
+                  className="h-10 w-full bg-background pl-9 text-xs"
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder="Search accounts…"
                   value={query}
@@ -193,7 +193,7 @@ export default function OrganizationAgentsExplorer({
               >
                 <SelectTrigger
                   aria-label="Filter accounts"
-                  className="h-10! w-32 shrink-0 bg-white text-xs"
+                  className="h-10! w-32 shrink-0 bg-background text-xs"
                 >
                   <SelectValue />
                 </SelectTrigger>
@@ -205,7 +205,7 @@ export default function OrganizationAgentsExplorer({
             </Flex>
 
             {agents.length > 0 && filteredAgents.length === 0 ? (
-              <p className="relative z-10 rounded-xl border border-dashed border-zinc-200 bg-background p-5 text-xs/relaxed text-zinc-500">
+              <p className="relative z-10 rounded-xl border border-dashed border-border bg-background p-5 text-xs/relaxed text-muted-foreground">
                 No accounts match. Try another provider or filter.
               </p>
             ) : null}
@@ -244,15 +244,15 @@ export default function OrganizationAgentsExplorer({
                       type="button"
                     >
                       <div className="min-w-0">
-                        <p className="truncate font-mono text-xs font-semibold text-zinc-900">
+                        <p className="truncate font-mono text-xs font-semibold text-foreground">
                           {agent.accountLabel ?? "Connected account"}
                         </p>
-                        <p className="mt-1 text-[11px] text-zinc-500">
+                        <p className="mt-1 text-[11px] text-muted-foreground">
                           {name} · {agent.plan} · added by @
                           {agent.ownerUsername}
                         </p>
                         {primaryUsage ? (
-                          <p className="mt-2 text-[10px] text-zinc-500">
+                          <p className="mt-2 text-[10px] text-muted-foreground">
                             {primaryUsage.label} ·{" "}
                             {agentPoolUsageValue(primaryUsage)}
                           </p>
@@ -297,8 +297,8 @@ export default function OrganizationAgentsExplorer({
               Account details and available usage for this organization.
             </DialogDescription>
 
-            <article className="min-w-0 overflow-hidden bg-white">
-              <header className="border-b border-zinc-100 p-5">
+            <article className="min-w-0 overflow-hidden bg-card">
+              <header className="border-b border-border p-5">
                 <Flex className="items-start justify-between gap-3">
                   <Flex className="min-w-0 items-center gap-2.5">
                     <AgentsProviderIcon
@@ -306,11 +306,10 @@ export default function OrganizationAgentsExplorer({
                     />
                     <div className="min-w-0">
                       <Flex className="flex-wrap items-center gap-2">
-                        <p className="text-[10px] font-medium tracking-wider text-zinc-500 uppercase">
+                        <p className="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
                           {agentProvider(selectedAgent)}
                         </p>
                         <Badge
-                          className="text-[9px] font-normal uppercase"
                           variant="secondary"
                         >
                           {selectedAgent.plan}
@@ -322,7 +321,7 @@ export default function OrganizationAgentsExplorer({
                     </div>
                   </Flex>
                   <Button
-                    className="-mt-1 -mr-1 shrink-0 text-zinc-400"
+                    className="-mt-1 -mr-1 shrink-0 text-muted-foreground"
                     onClick={() => setSelectedId(null)}
                     size="icon-sm"
                     type="button"
@@ -343,19 +342,19 @@ export default function OrganizationAgentsExplorer({
                 ) : null}
 
                 {usageQuery.data && usageQuery.data.requests > 0 ? (
-                  <section className="space-y-3 border-t border-zinc-100 pt-4">
-                    <h4 className="text-[10px] font-semibold tracking-widest text-zinc-400 uppercase">
+                  <section className="space-y-3 border-t border-border pt-4">
+                    <h4 className="text-[10px] font-semibold tracking-widest text-muted-foreground uppercase">
                       Organization usage · last 30 days
                     </h4>
                     <dl className="grid grid-cols-2 gap-3 text-xs">
                       <div>
-                        <dt className="text-zinc-500">Requests</dt>
+                        <dt className="text-muted-foreground">Requests</dt>
                         <dd className="mt-1 font-mono font-semibold">
                           {formatCount(usageQuery.data.requests)}
                         </dd>
                       </div>
                       <div>
-                        <dt className="text-zinc-500">Reported tokens</dt>
+                        <dt className="text-muted-foreground">Reported tokens</dt>
                         <dd className="mt-1 font-mono font-semibold">
                           {usageQuery.data.tokenKnownRequests
                             ? formatTokenCount(
@@ -390,13 +389,13 @@ export default function OrganizationAgentsExplorer({
                   </div>
                 ) : null}
 
-                <dl className="space-y-2 border-t border-zinc-100 pt-4 text-[11px]">
+                <dl className="space-y-2 border-t border-border pt-4 text-[11px]">
                   <Flex className="items-center justify-between gap-3">
-                    <dt className="text-zinc-400">Added by</dt>
+                    <dt className="text-muted-foreground">Added by</dt>
                     <dd>@{selectedAgent.ownerUsername}</dd>
                   </Flex>
                   <Flex className="items-center justify-between gap-3">
-                    <dt className="text-zinc-400">Status</dt>
+                    <dt className="text-muted-foreground">Status</dt>
                     <dd>
                       {availabilityLabel(selectedAgent.availabilityStatus)}
                     </dd>
@@ -406,7 +405,7 @@ export default function OrganizationAgentsExplorer({
 
               {isOrganizationOwner ||
               selectedAgent.ownerUsername === currentUsername ? (
-                <footer className="space-y-3 border-t border-zinc-100 bg-zinc-50/60 px-5 py-3">
+                <footer className="space-y-3 border-t border-border bg-muted/60 px-5 py-3">
                   {removeError && removeErrorId === selectedAgent.id ? (
                     <p role="alert" className="text-xs text-destructive">
                       {removeError}

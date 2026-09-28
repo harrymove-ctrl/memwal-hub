@@ -135,16 +135,16 @@ export default function OrganizationRoute() {
 
   return (
     <section className="mx-auto w-full max-w-7xl space-y-5 px-4 pt-5 pb-8 sm:px-6 lg:px-8">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200/80 pb-4">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border/80 pb-4">
         <Flex className="flex-wrap items-center gap-2.5">
-          <p className="font-mono text-xs tracking-widest text-zinc-400 uppercase">
+          <p className="font-mono text-xs tracking-widest text-muted-foreground uppercase">
             Organization
           </p>
           {organization ? (
             <Select onValueChange={selectOrganization} value={organization.id}>
               <SelectTrigger
                 aria-label="Selected organization"
-                className="h-9! max-w-full min-w-36 bg-white px-3 text-sm font-semibold text-zinc-900"
+                className="h-9! max-w-full min-w-36 bg-background px-3 text-sm font-semibold text-foreground"
               >
                 <SelectValue />
               </SelectTrigger>
@@ -190,7 +190,7 @@ export default function OrganizationRoute() {
       ) : null}
 
       {!session.user ? (
-        <div className="rounded-2xl border border-zinc-200 bg-white py-20 text-center">
+        <div className="rounded-2xl border border-border bg-card py-20 text-center">
           <h1 className="font-heading text-xl font-semibold">
             Your teams, in one place
           </h1>
@@ -212,7 +212,7 @@ export default function OrganizationRoute() {
       ) : (
         <>
           {!organization ? (
-            <section className="mx-auto max-w-xl space-y-5 rounded-2xl border border-zinc-200 bg-white p-5 shadow-xs sm:p-7">
+            <section className="mx-auto max-w-xl space-y-5 rounded-2xl border border-border bg-card p-5 shadow-xs sm:p-7">
               <h1 className="font-heading text-lg font-semibold">
                 Create an organization
               </h1>
@@ -247,7 +247,7 @@ export default function OrganizationRoute() {
           ) : null}
 
           {invitations.length > 0 ? (
-            <section className="space-y-3 rounded-2xl border border-indigo-200 bg-indigo-50/50 p-5">
+            <section className="space-y-3 rounded-2xl border border-primary/25 bg-primary/10 p-5">
               <h2 className="font-heading text-lg font-semibold">
                 Invitations for you
               </h2>
@@ -255,7 +255,7 @@ export default function OrganizationRoute() {
                 {invitations.map((invitation) => (
                   <li
                     key={invitation.id}
-                    className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-white p-3"
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-card p-3"
                   >
                     <p className="text-sm">
                       <strong>{invitation.organizationName}</strong> · invited

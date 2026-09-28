@@ -204,13 +204,13 @@ export default function AgentsRoute() {
       />
       <div
         aria-hidden="true"
-        className="absolute top-0 right-0 -z-10 size-80 rounded-full bg-indigo-200/30 blur-3xl"
+        className="absolute top-0 right-0 -z-10 size-80 rounded-full bg-primary/10 blur-3xl"
       />
 
       <Flex className="mx-auto min-h-0 w-full max-w-400 flex-1 flex-col">
-        <header className="flex shrink-0 flex-wrap items-end justify-between gap-4 border-b border-zinc-200/80 pb-5 sm:gap-6">
+        <header className="flex shrink-0 flex-wrap items-end justify-between gap-4 border-b border-border/80 pb-5 sm:gap-6">
           <div>
-            <Flex className="items-center gap-2 text-[10px] font-semibold tracking-widest text-zinc-500 uppercase">
+            <Flex className="items-center gap-2 text-[10px] font-semibold tracking-widest text-muted-foreground uppercase">
               <Bot aria-hidden="true" className="size-3.5" />
               Shared agent accounts
             </Flex>
@@ -222,7 +222,7 @@ export default function AgentsRoute() {
               Agents
             </h1>
 
-            <p className="mt-2 max-w-lg text-sm/relaxed text-zinc-500">
+            <p className="mt-2 max-w-lg text-sm/relaxed text-muted-foreground">
               Find your provider. Select an account to explore usage and access.
             </p>
           </div>
@@ -262,7 +262,7 @@ export default function AgentsRoute() {
             pools={pools}
           />
         ) : (
-          <p className="mt-5 rounded-xl border border-dashed border-zinc-300 p-8 text-center text-sm text-muted-foreground">
+          <p className="mt-5 rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
             No connected accounts yet.
           </p>
         )}
