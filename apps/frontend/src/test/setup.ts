@@ -5,6 +5,78 @@ import { afterEach, expect } from "vitest";
 
 expect.extend(matchers);
 
+/**
+ * jsdom has no IntersectionObserver. `BlueprintReveal` (and anything else
+ * built on `useInView`) needs one to mount at all, so this stub reports every
+ * observed element as immediately intersecting — tests see the settled,
+ * fully-revealed DOM rather than the entrance animation's initial frame.
+ */
+class IntersectionObserverStub implements IntersectionObserver {
+  readonly root = null;
+  readonly rootMargin = "";
+  readonly scrollMargin = "";
+  readonly thresholds: ReadonlyArray<number> = [];
+  private readonly callback: IntersectionObserverCallback;
+
+  constructor(callback: IntersectionObserverCallback) {
+    this.callback = callback;
+  }
+
+  observe(target: Element) {
+    this.callback(
+      [{ isIntersecting: true, target } as IntersectionObserverEntry],
+      this,
+    );
+  }
+  unobserve() {}
+  disconnect() {}
+  takeRecords(): IntersectionObserverEntry[] {
+    return [];
+  }
+}
+
+globalThis.IntersectionObserver =
+  IntersectionObserverStub as unknown as typeof IntersectionObserver;
+// Radix Select uses pointer capture, which jsdom does not implement.
+if (!HTMLElement.prototype.hasPointerCapture) {
+  HTMLElement.prototype.hasPointerCapture = () => false;
+  HTMLElement.prototype.setPointerCapture = () => {};
+  HTMLElement.prototype.releasePointerCapture = () => {};
+}
+
+if (!HTMLElement.prototype.scrollIntoView) {
+  HTMLElement.prototype.scrollIntoView = () => {};
+}
+
+if (typeof localStorage === "undefined" || typeof localStorage.setItem !== "function") {
+  const store = new Map<string, string>();
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      clear: () => store.clear(),
+      getItem: (key: string) => store.get(key) ?? null,
+      key: (index: number) => [...store.keys()][index] ?? null,
+      get length() {
+        return store.size;
+      },
+      removeItem: (key: string) => store.delete(key),
+      setItem: (key: string, value: string) => store.set(key, String(value)),
+    },
+  });
+}
+
+// Radix Popper (DropdownMenuContent, PopoverContent) measures via
+// ResizeObserver to position floating content; jsdom does not implement it.
+if (!globalThis.ResizeObserver) {
+  class ResizeObserverStub implements ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  globalThis.ResizeObserver =
+    ResizeObserverStub as unknown as typeof ResizeObserver;
+}
+
 afterEach(() => {
   cleanup();
 });

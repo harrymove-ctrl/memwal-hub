@@ -4,11 +4,11 @@ import { KeyRound } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
+import FocusReturnDialogContent from "@/components/focus-return-dialog-content";
 import Center from "@/components/ui/center";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
-  DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
@@ -17,8 +17,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import WalletLogin from "@/components/wallet-login";
+import WalletProviders from "@/components/wallet-providers";
 import { AuthServiceError } from "@/services/auth";
-import type { LoginCredentials, RegisterCredentials } from "@/services/auth";
+import type {
+  AuthenticatedUser,
+  LoginCredentials,
+  RegisterCredentials,
+} from "@/services/auth";
 
 export type WorkspaceShellAuthMode = "login" | "register";
 
@@ -33,6 +39,7 @@ interface WorkspaceShellAuthDialogProps {
     mode: WorkspaceShellAuthMode,
     credentials: LoginCredentials | RegisterCredentials,
   ) => Promise<void>;
+  onWalletAuthenticated: (user: AuthenticatedUser) => void;
   onOpenChange: (open: boolean) => void;
   open: boolean;
 }
@@ -40,6 +47,7 @@ interface WorkspaceShellAuthDialogProps {
 export default function WorkspaceShellAuthDialog({
   onAuthenticate,
   onOpenChange,
+  onWalletAuthenticated,
   open,
 }: WorkspaceShellAuthDialogProps) {
   const [mode, setMode] = useState<WorkspaceShellAuthMode>("login");
@@ -105,16 +113,16 @@ export default function WorkspaceShellAuthDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <FocusReturnDialogContent>
         <DialogHeader className="items-center text-center">
-          <Center className="mb-1 size-10 rounded-xl border border-indigo-200 bg-indigo-50 text-indigo-600">
+          <Center className="mb-1 size-10 rounded-xl border border-primary/25 bg-primary/10 text-primary">
             <KeyRound aria-hidden="true" className="size-5" />
           </Center>
 
           <DialogTitle>Join the sharing community</DialogTitle>
           <DialogDescription>
-            Browsing stays public. An account is only required when you request
-            access to a pool.
+            Browsing stays public. Sign in to request pool access or chat in
+            Playground.
           </DialogDescription>
         </DialogHeader>
 
@@ -197,7 +205,11 @@ export default function WorkspaceShellAuthDialog({
             </Button>
           </DialogFooter>
         </form>
-      </DialogContent>
+
+        <WalletProviders>
+          <WalletLogin onAuthenticated={onWalletAuthenticated} />
+        </WalletProviders>
+      </FocusReturnDialogContent>
     </Dialog>
   );
 }

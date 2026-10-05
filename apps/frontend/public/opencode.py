@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Install a live Hub William provider catalogue into OpenCode.
 
-    curl -fsSL https://<hub>/opencode.py | python3 - --url=https://<api> --key=YOUR_GATEWAY_KEY
+    curl -fsSL https://<hub>/opencode.py | python3 - --url=https://<api>
 """
 
 import argparse
+import copy
 import getpass
 import json
 import os
@@ -27,6 +28,12 @@ DEFAULT_CODEX_MODELS = (
         ("low", "medium", "high", "xhigh", "max", "ultra"),
     ),
     (
+        "gpt-6-sol",
+        "GPT-6 Sol",
+        ("low", "medium", "high", "xhigh", "max", "ultra"),
+    ),
+    ("gpt-6-luna", "GPT-6 Luna", ("low", "medium", "high", "xhigh", "max")),
+    (
         "gpt-5.6-sol",
         "GPT-5.6 Sol",
         ("low", "medium", "high", "xhigh", "max", "ultra"),
@@ -37,13 +44,140 @@ DEFAULT_CODEX_MODELS = (
         ("low", "medium", "high", "xhigh", "max", "ultra"),
     ),
     ("gpt-5.6-luna", "GPT-5.6 Luna", ("low", "medium", "high", "xhigh", "max")),
-    ("gpt-5.5", "GPT-5.5", ("low", "medium", "high", "xhigh")),
-    (
-        "gpt-5.3-codex-spark",
-        "GPT-5.3 Codex Spark",
-        ("low", "medium", "high", "xhigh"),
-    ),
 )
+
+REMEMBER_MODEL_PLUGIN_SOURCE = """import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
+
+const CONFIG_PATH = path.join(os.homedir(), ".config", "opencode", "opencode.json");
+
+function updateGlobalConfig({ providerID, modelID, variant, agent, explicitVariant = true }) {
+  if (!providerID || !modelID) return;
+
+  const targetAgent = (!agent || agent === "all") ? "build" : agent;
+  if (["compaction", "title", "summary", "explore"].includes(targetAgent)) return;
+
+  const modelKey = `${providerID}/${modelID}`;
+
+  try {
+    if (!fs.existsSync(CONFIG_PATH)) return;
+    const raw = fs.readFileSync(CONFIG_PATH, "utf8");
+    const config = JSON.parse(raw);
+
+    const prevModel = config.model;
+    const prevVariant = config.agent?.[targetAgent]?.variant;
+
+    const normalizedVariant = (variant && variant !== "default") ? variant : undefined;
+
+    if (!explicitVariant && prevModel === modelKey) {
+      return;
+    }
+
+    if (explicitVariant && prevModel === modelKey && prevVariant === normalizedVariant) {
+      return;
+    }
+
+    config.model = modelKey;
+
+    if (explicitVariant) {
+      if (normalizedVariant) {
+        config.agent = config.agent || {};
+        config.agent[targetAgent] = config.agent[targetAgent] || {};
+        config.agent[targetAgent].model = modelKey;
+        config.agent[targetAgent].variant = normalizedVariant;
+      } else {
+        if (config.agent?.[targetAgent]) {
+          delete config.agent[targetAgent].variant;
+          if (config.agent[targetAgent].model === modelKey) {
+            delete config.agent[targetAgent].model;
+          }
+          if (Object.keys(config.agent[targetAgent]).length === 0) {
+            delete config.agent[targetAgent];
+          }
+        }
+        if (config.agent && Object.keys(config.agent).length === 0) {
+          delete config.agent;
+        }
+      }
+    } else {
+      if (config.agent?.[targetAgent]?.model && config.agent[targetAgent].model !== modelKey) {
+        delete config.agent[targetAgent].variant;
+        delete config.agent[targetAgent].model;
+        if (Object.keys(config.agent[targetAgent]).length === 0) {
+          delete config.agent[targetAgent];
+        }
+        if (config.agent && Object.keys(config.agent).length === 0) {
+          delete config.agent;
+        }
+      }
+    }
+
+    const tempPath = `${CONFIG_PATH}.${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify(config, null, 2) + "\\n", "utf8");
+    fs.renameSync(tempPath, CONFIG_PATH);
+  } catch (_) {}
+}
+
+export default async function rememberModelPlugin({ client } = {}) {
+  if (client?.event?.event) {
+    try {
+      client.event.event({
+        onSseEvent: (streamEvent) => {
+          try {
+            const data = streamEvent?.data;
+            if (!data) return;
+            const parsed = typeof data === "string" ? JSON.parse(data) : data;
+            if (
+              parsed?.type === "session.next.model.switched" &&
+              parsed.properties?.model
+            ) {
+              const { id, providerID, variant } = parsed.properties.model;
+              updateGlobalConfig({
+                providerID,
+                modelID: id,
+                variant,
+                explicitVariant: true,
+              });
+            }
+          } catch (_) {}
+        },
+      }).catch(() => {});
+    } catch (_) {}
+  }
+
+  return {
+    "chat.message": async (input, output) => {
+      try {
+        const providerID = input.model?.providerID || output?.message?.model?.providerID;
+        const modelID = input.model?.modelID || input.model?.id || output?.message?.model?.modelID;
+        const variant = input.variant || output?.message?.model?.variant;
+        updateGlobalConfig({
+          providerID,
+          modelID,
+          variant,
+          agent: input.agent,
+          explicitVariant: true,
+        });
+      } catch (_) {}
+    },
+    "chat.params": async (input) => {
+      try {
+        const providerID = input.provider?.id || input.model?.providerID;
+        const modelID = input.model?.id;
+        if (providerID && modelID) {
+          updateGlobalConfig({
+            providerID,
+            modelID,
+            agent: input.agent,
+            explicitVariant: false,
+          });
+        }
+      } catch (_) {}
+    },
+  };
+}
+"""
 
 
 def _validated_gateway_url(value):
@@ -158,7 +292,21 @@ def _gateway_models(gateway_url, key, provider):
     try:
         with urlopen(request, timeout=12) as response:
             payload = json.load(response)
-    except (HTTPError, URLError, TimeoutError, ValueError):
+    except HTTPError as error:
+        try:
+            payload = json.load(error)
+        except (OSError, ValueError):
+            payload = {}
+        finally:
+            error.close()
+        if (
+            error.code == 401
+            and isinstance(payload, dict)
+            and payload.get("code") == "invalid_gateway_key"
+        ):
+            raise ValueError("the Hub gateway key is invalid or revoked")
+        return []
+    except (URLError, TimeoutError, ValueError):
         return []
     models = payload.get("data", []) if isinstance(payload, dict) else []
     return [model for model in models if isinstance(model, dict) and model.get("id")]
@@ -241,32 +389,38 @@ def _variants(efforts):
     return {effort: {"reasoningEffort": effort} for effort in efforts}
 
 
-def _codex_model_config(discovered):
-    if discovered is None:
-        return {}
-    models = {}
-    for model in discovered:
-        identifier = model["model"]
-        efforts = [
-            item.get("reasoningEffort")
-            for item in model.get("supportedReasoningEfforts", [])
-            if isinstance(item, dict) and item.get("reasoningEffort")
-        ]
-        models[identifier] = {
-            "name": model.get("displayName") or identifier,
-            "options": {"reasoningEffort": "medium"},
-            "variants": _variants(efforts or ("low", "medium", "high")),
-        }
-    if models:
-        return models
-    return {
-        identifier: {
-            "name": name,
-            "options": {"reasoningEffort": "medium"},
-            "variants": _variants(efforts),
-        }
+def _codex_model_config(available, discovered):
+    local = {model["model"]: model for model in discovered}
+    fallback = {
+        identifier: (name, efforts)
         for identifier, name, efforts in DEFAULT_CODEX_MODELS
     }
+    models = {}
+    for model in available:
+        identifier = model["id"]
+        if identifier in models:
+            continue
+        local_model = local.get(identifier, {})
+        efforts = [
+            item.get("reasoningEffort")
+            for item in local_model.get("supportedReasoningEfforts", [])
+            if isinstance(item, dict) and item.get("reasoningEffort")
+        ]
+        if not efforts and identifier in fallback:
+            efforts = fallback[identifier][1]
+        entry = {
+            "name": local_model.get("displayName")
+            or model.get("display_name")
+            or model.get("name")
+            or fallback.get(identifier, (identifier,))[0],
+        }
+        if efforts:
+            entry["options"] = {
+                "reasoningEffort": "medium" if "medium" in efforts else efforts[0]
+            }
+            entry["variants"] = _variants(efforts)
+        models[identifier] = entry
+    return models
 
 
 def _provider_model_config(models, effort_option=None):
@@ -292,12 +446,36 @@ def _provider_model_config(models, effort_option=None):
     return configured
 
 
-def build_config(existing, gateway_url, key, catalogues):
-    document = dict(existing)
+def _missing_managed_model(value, managed_ids, providers):
+    if not isinstance(value, str) or "/" not in value:
+        return False
+    provider_id, model_id = value.split("/", 1)
+    return provider_id in managed_ids and (
+        provider_id not in providers or model_id not in providers[provider_id]["models"]
+    )
+
+
+def build_config(existing, gateway_url, key, catalogues, plugin_path=None):
+    document = copy.deepcopy(existing) if isinstance(existing, dict) else {}
+    document["$schema"] = "https://opencode.ai/config.json"
+    disabled = document.get("disabled_providers")
+    if not isinstance(disabled, list):
+        disabled = []
+    document["disabled_providers"] = list(dict.fromkeys(disabled + ["opencode"]))
     providers = document.get("provider")
     if not isinstance(providers, dict):
         providers = {}
-        document["provider"] = providers
+    document["provider"] = providers
+
+    plugins = []
+    if plugin_path:
+        plugins.append("file://" + plugin_path)
+    if isinstance(existing, dict) and isinstance(existing.get("plugin"), list):
+        for item in existing["plugin"]:
+            if item not in plugins:
+                plugins.append(item)
+    if plugins:
+        document["plugin"] = plugins
 
     provider_specs = {
         "hub-codex": {
@@ -307,7 +485,9 @@ def build_config(existing, gateway_url, key, catalogues):
                 "apiKey": key,
                 "baseURL": gateway_url + "/gateway/openai/v1",
             },
-            "models": _codex_model_config(catalogues.get("codex", [])),
+            "models": _codex_model_config(
+                catalogues.get("codex", []), catalogues.get("codex_metadata", [])
+            ),
         },
         "hub-claude": {
             "name": "Hub William · Claude",
@@ -347,23 +527,34 @@ def build_config(existing, gateway_url, key, catalogues):
             "models": _provider_model_config(catalogues.get("deepseek", [])),
         },
     }
+    for provider_id in provider_specs:
+        providers.pop(provider_id, None)
     for provider_id, provider in provider_specs.items():
         if provider["models"]:
             providers[provider_id] = provider
-        else:
-            providers.pop(provider_id, None)
-
-    disabled = document.get("disabled_providers")
-    if not isinstance(disabled, list):
-        disabled = []
-    if "opencode" not in disabled:
-        disabled.append("opencode")
-    document["disabled_providers"] = disabled
-    if "model" not in document and "hub-codex" in providers:
-        preferred = "gpt-5.6-sol"
-        if preferred not in providers["hub-codex"]["models"]:
-            preferred = next(iter(providers["hub-codex"]["models"]))
-        document["model"] = "hub-codex/" + preferred
+    for model_key in ("model", "small_model"):
+        if _missing_managed_model(document.get(model_key), provider_specs, providers):
+            document.pop(model_key, None)
+    if isinstance(document.get("agent"), dict):
+        for settings in document["agent"].values():
+            if isinstance(settings, dict) and _missing_managed_model(
+                settings.get("model"), provider_specs, providers
+            ):
+                settings.pop("model", None)
+                settings.pop("variant", None)
+    if "model" not in document:
+        if "hub-codex" in providers:
+            preferred = "gpt-6-sol"
+            if preferred not in providers["hub-codex"]["models"]:
+                preferred = next(iter(providers["hub-codex"]["models"]))
+            document["model"] = "hub-codex/" + preferred
+        elif "hub-claude" in providers:
+            preferred = "claude-opus-5-5"
+            if preferred not in providers["hub-claude"]["models"]:
+                preferred = "claude-sonnet-5"
+            if preferred not in providers["hub-claude"]["models"]:
+                preferred = next(iter(providers["hub-claude"]["models"]))
+            document["model"] = "hub-claude/" + preferred
     return document
 
 
@@ -387,23 +578,34 @@ def install(terminal, args, home=None):
     )
     terminal.write("Discovering models from connected Hub pools…\n")
     terminal.flush()
-    codex_available = _gateway_models(gateway_url, key, "codex")
     catalogues = {
-        "codex": _codex_models() if codex_available else None,
+        "codex": _gateway_models(gateway_url, key, "codex"),
         "claude": _gateway_models(gateway_url, key, "claude"),
         "gemini": _gateway_models(gateway_url, key, "gemini"),
         "grok": _gateway_models(gateway_url, key, "grok"),
         "deepseek": _gateway_models(gateway_url, key, "deepseek"),
     }
-    path = os.path.join(
-        home or os.path.expanduser("~"), ".config", "opencode", "opencode.json"
+    if not any(catalogues.values()):
+        raise ValueError("no provider models could be discovered; check the key and gateway")
+    catalogues["codex_metadata"] = _codex_models() if catalogues["codex"] else []
+    config_dir = os.path.join(
+        home or os.path.expanduser("~"), ".config", "opencode"
     )
-    document = build_config(_read_document(path), gateway_url, key, catalogues)
+    path = os.path.join(config_dir, "opencode.json")
+    plugin_path = os.path.join(config_dir, "plugins", "remember-model.mjs")
+    existing = _read_document(path)
+    document = build_config(
+        existing, gateway_url, key, catalogues, plugin_path=plugin_path
+    )
     if not document.get("provider"):
         raise ValueError("the key has no reachable provider pools")
+    _atomic_write(plugin_path, REMEMBER_MODEL_PLUGIN_SOURCE)
     _atomic_write(path, json.dumps(document, indent=2, sort_keys=True) + "\n")
     installed = ", ".join(sorted(document["provider"]))
     terminal.write("Installed OpenCode providers: %s.\n" % installed)
+    terminal.write(
+        "Installed OpenCode plugin: remember-model (auto-saves selected model).\n"
+    )
     terminal.write("Run opencode, use /models to switch models and /variants for effort.\n")
     terminal.flush()
     return 0

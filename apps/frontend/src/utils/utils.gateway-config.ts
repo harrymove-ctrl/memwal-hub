@@ -35,13 +35,10 @@ export function resolveGatewayOrigin(
 export interface GatewayInstallCommandOptions {
   gatewayOrigin: string;
   installerUrl: string;
-  key?: string;
 }
 
 export function gatewayInstallCommand(options: GatewayInstallCommandOptions) {
-  const key = options.key ?? GATEWAY_KEY_PLACEHOLDER;
-
-  return `curl -fsSL ${options.installerUrl} | python3 - --url=${options.gatewayOrigin} --key=${key}`;
+  return `curl -fsSL ${options.installerUrl} | python3 - --url=${options.gatewayOrigin}`;
 }
 
 export interface GatewayAgentConfigsOptions {
@@ -69,7 +66,7 @@ export function gatewayAgentConfigs(
         `model_provider = "hub-william"`,
         "",
         "[model_providers.hub-william]",
-        `name = "Hub William"`,
+        `name = "Bew Harness"`,
         `base_url = "${openaiBaseUrl}"`,
         `experimental_bearer_token = "${key}"`,
         `wire_api = "responses"`,

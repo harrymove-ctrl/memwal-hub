@@ -1,51 +1,29 @@
 import type { ReactNode } from "react";
-import { Boxes, ExternalLink, Layers } from "lucide-react";
+import { Boxes, ExternalLink, Users, Wrench } from "lucide-react";
 import { Link } from "react-router";
 
-import Flex from "@/components/ui/flex";
 import CopyBlock from "@/components/copy-block";
-import InstallCommands from "@/components/install-commands";
+import Flex from "@/components/ui/flex";
 import { GITHUB_REPOSITORY_URL } from "@/services/catalog";
 
-/**
- * The folder a contributor files their documents under.
- *
- * Shown as a snippet rather than prose because the four kinds are the whole
- * convention: the folder decides what an entry becomes, so a reader copying the
- * tree has already made every decision the catalogue asks of them.
- */
-const CONTRIBUTION_TREE = `contributors/<your-github-login>/
-├── libraries/
-│   ├── harness/<name>.md          an execution mode
-│   ├── skills/<name>/SKILL.md     a skill, with YAML front matter
-│   ├── hooks/<name>.md            a contract that fires around an action
-│   └── templates/<name>.md        a shape to write into
-└── tools/
-    └── <name>/<name>.md           how to install or run something`;
+const CONTRIBUTION_TREE = `contributors/
+├── default/                  # system (read-only)
+│   └── tools/
+│       ├── gateway/
+│       ├── opencode/
+│       └── omp/
+└── <your-github-login>/       # your contributions
+    └── tools/
+        └── <tool-name>/
+            └── README.md`;
 
-interface InlineCodeProps {
-  children: ReactNode;
-}
-
-function InlineCode({ children }: InlineCodeProps) {
-  return (
-    <code className="rounded border border-zinc-200 bg-zinc-100 px-1 py-0.5 font-mono text-[0.85em] text-zinc-800">
-      {children}
-    </code>
-  );
-}
-
-interface SpecificationSectionProps {
+interface WhitepaperSectionProps {
   children: ReactNode;
   index: string;
   title: string;
 }
 
-function SpecificationSection({
-  children,
-  index,
-  title,
-}: SpecificationSectionProps) {
+function WhitepaperSection({ children, index, title }: WhitepaperSectionProps) {
   return (
     <section className="space-y-4">
       <p className="font-mono text-xs font-semibold tracking-wider text-muted-foreground uppercase">
@@ -59,28 +37,28 @@ function SpecificationSection({
   );
 }
 
-export default function WhitepaperRoute() {
+export default function HomeRoute() {
   return (
     <article
       aria-labelledby="whitepaper-title"
       className="mx-auto w-full max-w-4xl space-y-12 px-6 pt-12 pb-24 text-left"
     >
       <header className="space-y-4 border-b border-border pb-10">
-        <p className="flex items-center gap-2 font-mono text-xs font-medium tracking-wider text-indigo-600 uppercase">
+        <p className="flex items-center gap-2 font-mono text-xs font-medium tracking-wider text-primary uppercase">
           <Boxes aria-hidden="true" className="size-4" />
-          White paper &amp; system architecture
+          White paper
         </p>
 
         <h1
           id="whitepaper-title"
           className="font-bold tracking-tight text-balance text-3xl/tight sm:text-4xl"
         >
-          Hub-William: the boundary an agent must not cross, written down
+          Bew-Harness: the boundary an agent must not cross, written down
         </h1>
 
         <p className="max-w-3xl text-muted-foreground text-base/relaxed">
           An agent given a whole codebase and a shell has no boundary it must
-          not cross, and nothing that fires when it tries. Hub-William writes
+          not cross, and nothing that fires when it tries. Bew-Harness writes
           that boundary down in four kinds of document —{" "}
           <strong className="font-semibold text-foreground">Harnesses</strong>,{" "}
           <strong className="font-semibold text-foreground">Skills</strong>,{" "}
@@ -92,160 +70,105 @@ export default function WhitepaperRoute() {
         </p>
       </header>
 
-      <SpecificationSection
-        index="01. The problem"
-        title="Why prompting harder does not fix it"
+      <WhitepaperSection
+        index="01. Why Bew Harness"
+        title="Share access without passing around provider credentials"
       >
-        <div className="space-y-3 text-zinc-700 text-sm/relaxed">
+        <div className="space-y-4 text-muted-foreground text-sm/relaxed">
           <p>
-            Contemporary AI coding agents suffer from fundamental systemic
-            limitations: prompt bloat, memory degradation across long contexts,
-            accidental destructive overwrites, and failure to honor
-            repository-specific architectural rules.
+            Sharing an account directly means handing out credentials and
+            managing access across teammates' devices. Bew Harness keeps the
+            provider connection on the server. Owners manage who can join a
+            pool, and approved teammates use their own Bew gateway keys.
           </p>
 
           <p>
-            When an agent is given an entire codebase and free rein over raw
-            shell commands, it frequently hallucinates non-existent
-            dependencies, breaks existing unit tests, violates project
-            conventions, and opens a pull request nobody can review.
+            Requests pass through a shared gateway instead of requiring every
+            teammate to sign in to the provider account from their own machine.
+            This centralizes upstream access and makes membership and key
+            revocation easier to manage. Provider usage limits and account
+            policies still apply; a shared gateway does not guarantee protection
+            from an account ban.
           </p>
 
-          <p className="rounded-xl border border-amber-200/80 bg-amber-50/70 p-4 font-mono text-amber-900 text-xs/relaxed">
-            <strong>Core hypothesis:</strong> the failure is not a wording
-            problem, so it does not have a wording fix. An agent needs a
-            boundary written down where it can be read — harnesses it executes
-            inside, skills that carry one discipline&rsquo;s rules, and hooks
-            that fire around the actions leaving the checkout.
+          <p>
+            Agents brings connected accounts, usage and pool membership
+            together. Tools contains setup instructions and integrations,
+            including Gateway, OpenCode and OMP. Playground lets you try models
+            using your connected accounts and approved pools.
           </p>
+
+          <Flex className="flex-wrap items-center gap-3 pt-1">
+            <Link
+              to="/agents"
+              className="flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-medium tracking-tight text-primary-foreground shadow-xs transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden"
+            >
+              <Users aria-hidden="true" className="size-3.5" />
+              Explore agents
+            </Link>
+
+            <Link
+              to="/tools"
+              className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-medium tracking-tight text-muted-foreground transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden"
+            >
+              <Wrench aria-hidden="true" className="size-3.5" />
+              Browse tools
+            </Link>
+          </Flex>
         </div>
-      </SpecificationSection>
+      </WhitepaperSection>
 
-      <SpecificationSection
+      <WhitepaperSection
         index="02. How to contribute"
-        title="Everything is a Markdown file, so a contribution is a pull request"
+        title="Useful tools grow through contributions"
       >
-        <div className="space-y-4 text-zinc-700 text-sm/relaxed">
+        <div className="space-y-4 text-muted-foreground text-sm/relaxed">
           <p>
-            Everything on the canvas is a Markdown file, so contributing is
-            opening a pull request that adds one. There is no upload, no
-            account, and nothing to run.
+            Contribute a tool through a pull request. Each contributor owns a
+            folder named after their GitHub username, with tool documentation
+            written in Markdown.
           </p>
 
-          <ol className="list-decimal space-y-4 pl-5 marker:font-mono marker:text-zinc-400">
-            <li>Fork the repository.</li>
+          <CopyBlock source={CONTRIBUTION_TREE} />
 
-            <li className="space-y-3">
-              <p>
-                Create{" "}
-                <InlineCode>
-                  contributors/default/contrib/&lt;your-github-login&gt;/
-                </InlineCode>{" "}
-                and file your document under the kind it is.
-              </p>
+          <p>
+            <strong className="font-semibold text-foreground">
+              The default folder belongs to the system.
+            </strong>{" "}
+            It is read-only for contributors: do not edit, rename or delete
+            anything under <code>contributors/default/</code>. Add your own
+            username folder instead and keep your contributions inside it.
+          </p>
 
-              <CopyBlock source={CONTRIBUTION_TREE} />
+          <ol className="list-decimal space-y-4 pl-5 marker:font-mono marker:text-muted-foreground">
+            <li>Fork the repository and branch from dev.</li>
 
-              <p>
-                The folder name has to be your GitHub login. That is what
-                publishes your page at{" "}
-                <InlineCode>/library/&lt;your-login&gt;</InlineCode>, and what
-                resolves your avatar beside it without an API call or a stored
-                file.
-              </p>
+            <li>
+              Create{" "}
+              <code className="break-all font-mono text-xs">
+                contributors/&lt;your-github-login&gt;/tools/&lt;tool-name&gt;/
+              </code>{" "}
+              and add a <code>README.md</code> describing your tool. You can
+              update tools inside your own contributor folder.
             </li>
 
             <li>
-              Write the document. A heading and a first paragraph are enough —
-              the site takes the entry&rsquo;s name and description from them,
-              and never edits your file. A skill also needs{" "}
-              <InlineCode>name</InlineCode> and{" "}
-              <InlineCode>description</InlineCode> front matter, because that is
-              what its format requires.
-            </li>
-
-            <li>
-              Open a pull request. CI runs formatting, linting, type checking,
-              tests, a production build and the catalogue&rsquo;s own suite.
-              Once it merges your page is prerendered and deployed — nobody has
-              to register it anywhere.
+              Open a pull request into dev with a description of the change and
+              the checks you ran.
             </li>
           </ol>
 
-          <p>
-            Changing a shared document is the same flow without step 2. Say in
-            the pull request why the rule should apply to everybody rather than
-            to you; that is the whole difference between the two folders.
-          </p>
-
-          <Flex className="items-center gap-3 flex-wrap pt-1">
-            <Link
-              to="/library"
-              className="flex items-center gap-2 rounded-lg bg-zinc-900 px-3 py-2 text-xs font-medium tracking-tight text-white shadow-xs transition-colors hover:bg-zinc-800 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden"
-            >
-              <Layers aria-hidden="true" className="size-3.5" />
-              Read the catalogue
-            </Link>
-
-            <a
-              href={GITHUB_REPOSITORY_URL}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-medium tracking-tight text-zinc-700 transition-colors hover:bg-zinc-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden"
-            >
-              synasapmob/hub-william on GitHub
-              <ExternalLink aria-hidden="true" className="size-3.5" />
-            </a>
-          </Flex>
+          <a
+            href={GITHUB_REPOSITORY_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-medium tracking-tight text-muted-foreground transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden"
+          >
+            Contribute on GitHub
+            <ExternalLink aria-hidden="true" className="size-3.5" />
+          </a>
         </div>
-      </SpecificationSection>
-
-      <SpecificationSection
-        index="03. How to use"
-        title="Install the catalogue on your machine"
-      >
-        <div className="space-y-4 text-zinc-700 text-sm/relaxed">
-          <p>
-            One dependency-free Python bootstrap downloads or updates the
-            catalogue, then opens the same terminal picker used for every later
-            change. There is no package-manager wrapper to install first.
-          </p>
-
-          <InstallCommands />
-
-          <div className="space-y-2">
-            <p className="font-mono text-xs font-semibold tracking-wider text-zinc-700 uppercase">
-              What it needs on the machine
-            </p>
-
-            <ul className="list-disc space-y-1.5 pl-5 marker:text-zinc-400">
-              <li>
-                <InlineCode>python3</InlineCode> 3.8 or newer on{" "}
-                <InlineCode>PATH</InlineCode>. macOS ships one at{" "}
-                <InlineCode>/usr/bin/python3</InlineCode> and most Linux
-                distributions already have one; with nothing new enough the
-                script stops before it does anything.
-              </li>
-
-              <li>
-                At least one agent CLI on <InlineCode>PATH</InlineCode> —{" "}
-                <InlineCode>claude</InlineCode>, <InlineCode>codex</InlineCode>{" "}
-                or <InlineCode>grok</InlineCode>. With none of them installed,{" "}
-                <InlineCode>init</InlineCode> stops with{" "}
-                <InlineCode>no agent CLI on PATH</InlineCode> rather than
-                installing documents no agent will read.
-              </li>
-            </ul>
-          </div>
-
-          <p>
-            The picker uses arrow keys to move, space to toggle an item, and
-            enter to preview the install. It asks once before touching anything,
-            then installs the selection into each agent&rsquo;s home as
-            read-only copies. The checkout stays the editable source.
-          </p>
-        </div>
-      </SpecificationSection>
+      </WhitepaperSection>
     </article>
   );
 }

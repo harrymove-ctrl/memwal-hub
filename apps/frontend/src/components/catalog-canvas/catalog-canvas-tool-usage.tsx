@@ -4,7 +4,7 @@ import { tv } from "tailwind-variants";
 import CopyBlock from "@/components/copy-block";
 import CopyCommand from "@/components/copy-command";
 import Flex from "@/components/ui/flex";
-import catalogService, { type CatalogCollection } from "@/services/catalog";
+import catalogService, { type CatalogCollection } from "@/services/catalog-library";
 import {
   GATEWAY_KEY_PLACEHOLDER,
   gatewayAgentConfigs,
@@ -20,8 +20,8 @@ const toolUsage = tv({
     container: "ml-2 space-y-5",
     section: "space-y-2",
     label:
-      "font-mono text-[10px] font-semibold tracking-wider text-zinc-500 uppercase",
-    description: "text-zinc-600 text-sm/relaxed",
+      "font-mono text-[10px] font-semibold tracking-wider text-muted-foreground uppercase",
+    description: "text-sm/relaxed text-muted-foreground",
   },
 });
 
@@ -171,7 +171,7 @@ export default function CatalogCanvasToolUsage({
           <p className={description()}>
             Remove the <code>--key=…</code> argument to type the Hub key in a
             hidden prompt instead of saving it in shell history. Upstream
-            provider credentials stay encrypted on Hub William.
+            provider credentials stay encrypted on Bew Harness.
           </p>
         </div>
       </div>
@@ -211,7 +211,7 @@ export default function CatalogCanvasToolUsage({
             Remove the <code>--key=…</code> argument to type the Hub key in a
             hidden prompt instead of saving it in shell history. The installer
             preserves providers outside its marked block and keeps upstream
-            credentials encrypted on Hub William.
+            credentials encrypted on Bew Harness.
           </p>
         </div>
       </div>
@@ -225,17 +225,17 @@ export default function CatalogCanvasToolUsage({
       <div className={section()}>
         <p className={label()}>Available MCPs</p>
 
-        <ul className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200/80 bg-card">
+        <ul className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/70 bg-card">
           {products.map((product) => (
             <li key={product.id} className="px-4 py-3">
               <Flex className="items-start gap-3">
                 <Plug
                   aria-hidden="true"
-                  className="mt-0.5 size-4 shrink-0 text-indigo-600"
+                  className="mt-0.5 size-4 shrink-0 text-primary"
                 />
 
                 <div className="min-w-0 flex-1">
-                  <p className="font-medium text-zinc-900 text-sm/normal">
+                  <p className="text-sm/normal font-medium text-foreground">
                     {product.label}
                   </p>
 
@@ -244,7 +244,7 @@ export default function CatalogCanvasToolUsage({
                   </p>
 
                   {product.servers.length > 1 ? (
-                    <p className="mt-1 font-mono text-[10px] text-slate-400">
+                    <p className="mt-1 font-mono text-[10px] text-muted-foreground">
                       {product.servers.length} project-scoped servers
                     </p>
                   ) : null}

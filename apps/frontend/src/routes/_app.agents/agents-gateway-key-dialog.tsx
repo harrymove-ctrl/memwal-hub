@@ -25,10 +25,22 @@ import gatewayKeysService, {
 } from "@/services/gateway-keys";
 import { copyText } from "@/utils/utils.clipboard";
 
-export default function AgentsGatewayKeyDialog() {
+interface AgentsGatewayKeyDialogProps {
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  hideTrigger?: boolean;
+}
+
+export default function AgentsGatewayKeyDialog({
+  open: controlledOpen,
+  onOpenChange: setControlledOpen,
+  hideTrigger = false,
+}: AgentsGatewayKeyDialogProps = {}) {
   const session = useWorkspaceSession();
   const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = controlledOpen ?? uncontrolledOpen;
+  const setOpen = setControlledOpen ?? setUncontrolledOpen;
   const [createdKey, setCreatedKey] = useState<CreatedGatewayKey | null>(null);
   const gatewayKeyQueryKey = [
     ...gatewayKeysService.queryKey,
@@ -82,12 +94,14 @@ export default function AgentsGatewayKeyDialog() {
 
   return (
     <Dialog open={open} onOpenChange={changeOpen}>
-      <DialogTrigger asChild>
-        <Button className="h-10 px-4" type="button" variant="outline">
-          <KeyRound aria-hidden="true" />
-          Gateway Key
-        </Button>
-      </DialogTrigger>
+      {hideTrigger ? null : (
+        <DialogTrigger asChild>
+          <Button className="h-10 px-4" type="button" variant="outline">
+            <KeyRound aria-hidden="true" />
+            Gateway Key
+          </Button>
+        </DialogTrigger>
+      )}
 
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
@@ -100,7 +114,7 @@ export default function AgentsGatewayKeyDialog() {
             the installers for Codex, Claude Code, Antigravity, Grok, and
             DeepSeek from{" "}
             <Link
-              className="font-medium text-indigo-600 hover:underline"
+              className="font-medium text-primary hover:underline"
               onClick={() => changeOpen(false)}
               to="/tools?node=gateway"
             >
@@ -124,7 +138,7 @@ export default function AgentsGatewayKeyDialog() {
         </Button>
 
         {createdKey ? (
-          <section className="space-y-2 rounded-xl border border-indigo-200 bg-indigo-50 p-3">
+          <section className="space-y-2 rounded-xl border border-primary/25 bg-primary/10 p-3">
             <Label htmlFor="created-gateway-key">
               Copy now — this key is shown once
             </Label>
@@ -154,7 +168,7 @@ export default function AgentsGatewayKeyDialog() {
             Loading gateway keys…
           </Flex>
         ) : keys.length > 0 ? (
-          <ul className="divide-y divide-zinc-100 rounded-xl border border-zinc-200">
+          <ul className="divide-y divide-border rounded-xl border border-border">
             {keys.map((key) => (
               <li key={key.id} className="p-3">
                 <Flex className="justify-between gap-3">
@@ -187,7 +201,7 @@ export default function AgentsGatewayKeyDialog() {
             ))}
           </ul>
         ) : (
-          <p className="rounded-xl border border-dashed border-zinc-300 p-4 text-center text-sm text-muted-foreground">
+          <p className="rounded-xl border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
             No active gateway keys.
           </p>
         )}

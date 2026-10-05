@@ -1,0 +1,74 @@
+/* Canvas frame: x=625..1428, y=60..888 at 1440 → 12px inset, radius 16, 1px line. */
+.canvas-wrap { position: relative; flex: 1; min-width: 0; margin: 12px 12px 12px 0; border: 1px solid var(--line); border-radius: var(--r-section); overflow: hidden; background: #fff; }
+.canvas {
+  position: absolute; inset: 0; overflow: hidden; cursor: grab;
+  /* The canvas never sits inside a scrolling page (desktop panel / phone tab), so drag owns touch. */
+  touch-action: none;
+  background-image: radial-gradient(var(--dot) 1px, transparent 1.2px);
+}
+.canvas:active { cursor: grabbing; }
+.canvas:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; border-radius: var(--r-section); }
+.cv-world { position: absolute; left: 0; top: 0; width: 1200px; height: 1000px; transform-origin: 0 0; will-change: transform; }
+.cv-world[data-animating="true"] { transition: transform 420ms var(--ease); }
+.cv-edges { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+.cv-edges path { fill: none; stroke-width: 1.2; stroke-dasharray: 4 6; animation: cv-flow 1.6s linear infinite; }
+@keyframes cv-flow { to { stroke-dashoffset: -20; } }
+
+.cv-runtoggle { position: absolute; left: 12px; top: 12px; z-index: 3; }
+
+.cv-section {
+  position: absolute; width: 228px; padding: 4px; border-radius: var(--r-section); background: var(--section); border: 1px solid var(--line);
+  animation: cv-in 320ms var(--ease) both;
+}
+.cv-section[data-tone="new"] { background: var(--section-new); border: 1px dashed var(--line-new); }
+@keyframes cv-in { from { opacity: 0; transform: translateY(6px); } }
+.cv-head { display: flex; align-items: center; }
+.cv-toggle { flex: 1; display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 6px; border: 0; background: transparent; border-radius: var(--r); cursor: pointer; text-align: left; }
+.cv-toggle:hover { background: rgba(0, 0, 0, 0.03); }
+.cv-chev { color: var(--text-2); transition: transform var(--dur) var(--ease); }
+.cv-toggle[aria-expanded="false"] .cv-chev { transform: rotate(-90deg); }
+.cv-edit { width: 22px; height: 22px; display: grid; place-items: center; border: 0; background: transparent; border-radius: 6px; color: var(--text-3); opacity: 0; cursor: pointer; transition: opacity var(--dur-fast); }
+.cv-section:hover .cv-edit, .cv-edit:focus-visible { opacity: 1; }
+.cv-edit:hover { background: rgba(0, 0, 0, 0.05); color: var(--text); }
+
+/* Height animation via grid rows: interruptible, no JS measuring. */
+.cv-collapse { display: grid; grid-template-rows: 1fr; transition: grid-template-rows var(--dur-slow) var(--ease); }
+.cv-collapse[data-open="false"] { grid-template-rows: 0fr; }
+.cv-collapse > div { overflow: hidden; min-height: 0; }
+
+.cv-rows { list-style: none; margin: 4px 0 0; padding: 0; background: #fff; border: 1px solid var(--line); border-radius: var(--r-card); }
+.cv-rows li { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 8px; border-top: 1px solid var(--line); color: var(--text-2); font-size: var(--fs-sm); line-height: var(--lh-sm); }
+.cv-rows li:first-child { border-top: 0; }
+.cv-rows li svg { color: var(--text-2); flex: none; }
+.cv-t { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; hyphens: none; }
+.cv-kicker { margin: 8px 2px 0; color: var(--text-3); font-size: var(--fs-sm); line-height: var(--lh-sm); }
+.cv-tool-groups { display: flex; flex-direction: column; gap: 4px; }
+.cv-rows .sep { color: var(--text-3); }
+.cv-op { border: 1px solid var(--line-2); border-radius: 4px; padding: 0 3px; margin: 0 4px; }
+.cv-note, .cv-empty { margin: 4px 0 0; padding: 8px; background: #fff; border: 1px solid var(--line); border-radius: var(--r-card); font-size: var(--fs-sm); line-height: 18px; color: var(--text-2); }
+.cv-empty { color: var(--text-3); }
+.cv-more { display: flex; align-items: center; gap: 4px; border: 0; background: transparent; padding: 0; cursor: pointer; color: var(--text); }
+
+.cv-agent { padding-bottom: 4px; }
+.cv-card { position: relative; margin: 4px 0 6px; padding: 8px 10px; background: #fff; border: 1px solid var(--line); border-radius: var(--r-card); }
+.cv-card strong { font-weight: 500; display: block; margin-bottom: 4px; }
+.cv-card p { margin: 0; color: var(--text-2); font-size: var(--fs-sm); line-height: 18px; }
+.cv-instr p { max-height: 90px; overflow: hidden; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); white-space: pre-wrap; }
+.cv-instr-edit { position: absolute; right: 8px; top: 8px; opacity: 0; transition: opacity var(--dur-fast); }
+.cv-instr:hover .cv-instr-edit, .cv-instr-edit:focus-visible { opacity: 1; }
+
+/* Zoom pill: bottom-centre, measured x=973..1079, y=842..874. */
+.cv-zoom { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); display: flex; align-items: center; gap: 0; padding: 4px; background: #fff; border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow-btn); z-index: 3; }
+.cv-pct { min-width: 50px; height: 24px; border: 0; background: transparent; border-radius: 6px; cursor: pointer; font-variant-numeric: tabular-nums; }
+.cv-pct:hover { background: var(--hover); }
+.cv-zoom .icon-btn:disabled { opacity: 0.4; cursor: default; }
+
+/* No hover on touch: keep edit affordances visible. */
+@media (hover: none) {
+  .cv-edit, .cv-instr-edit { opacity: 1; }
+}
+@media (max-width: 767px) {
+  .cv-edit { width: 44px; height: 44px; margin: -10px -10px -10px 0; }
+  .canvas-wrap { margin: 8px; }
+  .cv-zoom .icon-btn, .cv-pct { height: 44px; min-width: 44px; }
+}

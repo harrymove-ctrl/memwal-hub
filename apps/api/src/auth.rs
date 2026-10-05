@@ -192,6 +192,104 @@ pub async fn login(
     ))
 }
 
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct WalletNonceRequest {
+    pub address: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct WalletNonceResponse {
+    pub nonce: String,
+    pub message: String,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct WalletLoginRequest {
+    pub address: String,
+    pub nonce: String,
+    pub signature: String,
+}
+
+fn wallet_challenge(address: &str, nonce: &str) -> String {
+    format!(
+        "Sign in to Bew Harness\n\nAddress: {address}\nNonce: {nonce}\n\nThis request does not move funds."
+    )
+}
+
+#[utoipa::path(
+    post,
+    path = "/auth/wallet/nonce",
+    request_body = WalletNonceRequest,
+    responses(
+        (status = 200, description = "One-time sign-in challenge", body = WalletNonceResponse),
+        (status = 422, description = "Invalid wallet address", body = crate::ErrorResponse)
+    ),
+    tag = "auth"
+)]
+pub async fn wallet_nonce(
+    State(state): State<AppState>,
+    Json(payload): Json<WalletNonceRequest>,
+) -> Result<Json<WalletNonceResponse>, ApiError> {
+    let address = crate::wallet_signature::normalize_sui_address(&payload.address)?;
+    let nonce = nonce_hex(&random_bytes(16));
+    let message = wallet_challenge(&address, &nonce);
+    sqlx::query(
+        "INSERT INTO auth_nonces (nonce, address, expires_at) VALUES ($1, $2, NOW() + INTERVAL '5 minutes')",
+    )
+    .bind(&nonce)
+    .bind(&address)
+    .execute(&state.pool)
+    .await
+    .map_err(internal_error)?;
+    Ok(Json(WalletNonceResponse { nonce, message }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/auth/wallet/login",
+    request_body = WalletLoginRequest,
+    responses(
+        (status = 200, description = "Wallet signature accepted and session started", body = SessionResponse),
+        (status = 401, description = "Challenge or signature rejected", body = crate::ErrorResponse),
+        (status = 422, description = "Invalid wallet address", body = crate::ErrorResponse)
+    ),
+    tag = "auth"
+)]
+pub async fn wallet_login(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Json(payload): Json<WalletLoginRequest>,
+) -> Result<(CookieJar, Json<SessionResponse>), ApiError> {
+    let address = crate::wallet_signature::normalize_sui_address(&payload.address)?;
+    let stored = sqlx::query_as::<_, (String,)>(
+        "DELETE FROM auth_nonces WHERE nonce = $1 AND address = $2 AND expires_at > NOW() RETURNING nonce",
+    )
+    .bind(&payload.nonce)
+    .bind(&address)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(internal_error)?;
+    if stored.is_none() {
+        return Err(ApiError::Unauthorized);
+    }
+    let message = wallet_challenge(&address, &payload.nonce);
+    if crate::wallet_signature::is_zklogin_signature(&payload.signature) {
+        verify_zklogin(&address, &message, &payload.signature).await?;
+    } else {
+        crate::wallet_signature::verify_wallet_signature(&address, &message, &payload.signature)?;
+    }
+
+    let mut transaction = state.pool.begin().await.map_err(internal_error)?;
+    let user = find_or_create_wallet_user(&mut transaction, &address).await?;
+    let session_cookies =
+        create_session(&mut transaction, user.id, state.config.cookie_secure).await?;
+    transaction.commit().await.map_err(internal_error)?;
+    Ok((
+        jar.add(session_cookies.access).add(session_cookies.refresh),
+        Json(SessionResponse { user }),
+    ))
+}
+
 #[utoipa::path(
     get,
     path = "/auth/session",
@@ -345,6 +443,111 @@ pub async fn refresh(
             },
         }),
     ))
+}
+
+fn random_bytes(len: usize) -> Vec<u8> {
+    let mut bytes = vec![0_u8; len];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    bytes
+}
+
+fn nonce_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+async fn find_or_create_wallet_user(
+    transaction: &mut Transaction<'_, Postgres>,
+    address: &str,
+) -> Result<AuthenticatedUser, ApiError> {
+    if let Some(user) = sqlx::query_as::<_, SessionUser>(
+        "SELECT id, username, recovery_email FROM users WHERE sui_address = $1",
+    )
+    .bind(address)
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(internal_error)?
+    {
+        return Ok(AuthenticatedUser {
+            id: user.id,
+            username: user.username,
+            recovery_email: user.recovery_email,
+        });
+    }
+
+    let username = unused_wallet_username(transaction, address).await?;
+    let password_hash = hash_password(&URL_SAFE_NO_PAD.encode(random_bytes(32)))?;
+    let id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO users (id, username, password_hash, sui_address) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(id)
+    .bind(&username)
+    .bind(password_hash)
+    .bind(address)
+    .execute(&mut **transaction)
+    .await
+    .map_err(internal_error)?;
+    Ok(AuthenticatedUser {
+        id,
+        username,
+        recovery_email: None,
+    })
+}
+
+async fn unused_wallet_username(
+    transaction: &mut Transaction<'_, Postgres>,
+    address: &str,
+) -> Result<String, ApiError> {
+    let hex = address.trim_start_matches("0x");
+    for len in (8..=20).step_by(2) {
+        let candidate = format!("sui{}", &hex[..len]);
+        let taken = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)",
+        )
+        .bind(&candidate)
+        .fetch_one(&mut **transaction)
+        .await
+        .map_err(internal_error)?;
+        if !taken {
+            return Ok(candidate);
+        }
+    }
+    Err(ApiError::Conflict)
+}
+
+async fn verify_zklogin(address: &str, message: &str, signature: &str) -> Result<(), ApiError> {
+    use tokio::io::AsyncWriteExt;
+
+    let payload = serde_json::json!({
+        "address": address,
+        "message": message,
+        "signature": signature,
+    });
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut child = tokio::process::Command::new("node")
+        .current_dir(root.join("../frontend"))
+        .arg(root.join("../frontend/scripts/verify-zklogin.mjs"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|_| ApiError::Unauthorized)?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(payload.to_string().as_bytes())
+            .await
+            .map_err(|_| ApiError::Unauthorized)?;
+    }
+    let output = child
+        .wait_with_output()
+        .await
+        .map_err(|_| ApiError::Unauthorized)?;
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or_default();
+    if parsed.get("ok").and_then(|value| value.as_bool()) == Some(true) {
+        Ok(())
+    } else {
+        Err(ApiError::Unauthorized)
+    }
 }
 
 async fn create_session(

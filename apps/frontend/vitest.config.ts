@@ -9,7 +9,9 @@ export default defineConfig({
     },
   },
   test: {
+    env: { VITE_API_BASE_URL: "http://localhost:8080" },
     environment: "jsdom",
+    fileParallelism: false,
     setupFiles: ["./src/test/setup.ts"],
   },
 });

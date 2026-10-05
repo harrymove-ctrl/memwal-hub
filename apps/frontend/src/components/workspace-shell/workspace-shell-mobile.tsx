@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { LogIn, Menu } from "lucide-react";
+import { LogIn, Menu, UserRound } from "lucide-react";
 import { Link } from "react-router";
 
 import Center from "@/components/ui/center";
@@ -57,7 +57,7 @@ export default function WorkspaceShellMobile() {
             <SheetHeader className="sr-only">
               <SheetTitle>Navigation</SheetTitle>
               <SheetDescription>
-                Move between Hub William pages.
+                Move between Bew Harness pages.
               </SheetDescription>
             </SheetHeader>
 
@@ -69,12 +69,12 @@ export default function WorkspaceShellMobile() {
 
         <Link
           to="/"
-          className="flex items-center gap-1.5 rounded-md text-xs font-bold tracking-wider uppercase transition-colors hover:text-indigo-600 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden"
+          className="flex items-center gap-1.5 rounded-md text-xs font-bold tracking-wider uppercase transition-colors hover:text-primary focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden"
         >
-          <Center className="size-5 rounded bg-zinc-900 font-mono text-[10px] text-white">
+          <Center className="size-5 rounded bg-primary font-mono text-[10px] text-primary-foreground">
             W
           </Center>
-          Hub-William
+          Bew-Harness
         </Link>
       </Flex>
 
@@ -83,10 +83,22 @@ export default function WorkspaceShellMobile() {
         variant="outline"
         className="w-24"
         disabled={session.status === "loading"}
-        onClick={session.openAuth}
+        onClick={
+          session.user ? () => setMobileNavigationOpen(true) : session.openAuth
+        }
+        title={session.user?.username}
       >
-        <LogIn aria-hidden="true" data-icon="inline-start" />
-        {session.status === "loading" ? "Checking session…" : "Login"}
+        {session.user ? (
+          <>
+            <UserRound aria-hidden="true" data-icon="inline-start" />
+            <span className="truncate">{session.user.username}</span>
+          </>
+        ) : (
+          <>
+            <LogIn aria-hidden="true" data-icon="inline-start" />
+            {session.status === "loading" ? "Checking session…" : "Login"}
+          </>
+        )}
       </Button>
     </header>
   );

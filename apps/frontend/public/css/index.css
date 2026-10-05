@@ -4,9 +4,7 @@
 @import "@fontsource-variable/plus-jakarta-sans";
 @import "@fontsource-variable/jetbrains-mono";
 
-/* Styles the catalogue documents. Without it every element a markdown renderer
-   can emit would need a hand-written override, and the list would drift the
-   first time a contributor used one nobody had thought of. */
+/* Styles Playground Markdown without hand-writing each generated element. */
 @plugin "@tailwindcss/typography";
 
 /* The workspace is light only. This pins `dark:` to a class the app never sets,
@@ -16,6 +14,7 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+  --animate-navigation-progress: navigation-progress 12s ease-out forwards;
   --font-heading: var(--font-sans);
   --font-sans: "Plus Jakarta Sans Variable", sans-serif;
   --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
@@ -60,46 +59,84 @@
 }
 
 /**
- * The graphite paper palette.
+ * Warm paper palette, after breakscale (github.com/xevrion/breakscale).
  *
- * Zinc carries every surface and every word; indigo is reserved for the one
- * thing on a screen the reader should act on, which is why `--primary` is near
- * black rather than indigo — the specification's own buttons are ink, and an
- * indigo button beside an indigo link makes neither mean anything.
+ * The ground is warm paper, not clinical white; panels lift LIGHTER than the
+ * ground toward white, which keeps the layout open instead of boxed-in. Text
+ * is cool-leaning ink (hue ~264) against the warm stock — the temperature
+ * opposition is what makes it read as ink on paper. One warm-leaning indigo
+ * carries every "you did this" meaning: focus, selection, primary action.
+ * All pairs were contrast-measured in the source system: text 14.6:1,
+ * dim text 6.7:1, accent-as-text 5.8:1 on the ground.
  */
 :root {
-  --background: oklch(0.985 0.002 247);
-  --foreground: oklch(0.21 0.006 285.885);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.21 0.006 285.885);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.21 0.006 285.885);
-  --primary: oklch(0.21 0.006 285.885);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.967 0.001 286.375);
-  --secondary-foreground: oklch(0.274 0.006 286.033);
-  --muted: oklch(0.967 0.001 286.375);
-  --muted-foreground: oklch(0.552 0.016 285.938);
-  --accent: oklch(0.967 0.001 286.375);
-  --accent-foreground: oklch(0.21 0.006 285.885);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.92 0.004 286.32);
-  --input: oklch(0.92 0.004 286.32);
-  --ring: oklch(0.585 0.233 277.117);
-  --chart-1: oklch(0.585 0.233 277.117);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.685 0.169 237.323);
-  --chart-5: oklch(0.645 0.246 16.439);
+  --background: #faf7f3;
+  --foreground: #1e242e;
+  --card: #fffdfa;
+  --card-foreground: #1e242e;
+  --popover: #fffdfa;
+  --popover-foreground: #1e242e;
+  --primary: #1e242e;
+  --primary-foreground: #fffdfa;
+  --secondary: #f7f3ee;
+  --secondary-foreground: #30363f;
+  --muted: #f7f3ee;
+  --muted-foreground: #525862;
+  --accent: #f0ece5;
+  --accent-foreground: #1e242e;
+  --destructive: #c52b30;
+  --border: #e8e2da;
+  --input: #e8e2da;
+  --ring: #325cbd;
+  --chart-1: #325cbd;
+  --chart-2: #187a3b;
+  --chart-3: #945500;
+  --chart-4: #1f6099;
+  --chart-5: #c52b30;
   --radius: 0.625rem;
-  --sidebar: oklch(1 0 0);
-  --sidebar-foreground: oklch(0.21 0.006 285.885);
-  --sidebar-primary: oklch(0.21 0.006 285.885);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.967 0.001 286.375);
-  --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
-  --sidebar-border: oklch(0.92 0.004 286.32);
-  --sidebar-ring: oklch(0.585 0.233 277.117);
+  --sidebar: #fffdfa;
+  --sidebar-foreground: #1e242e;
+  --sidebar-primary: #1e242e;
+  --sidebar-primary-foreground: #fffdfa;
+  --sidebar-accent: #f7f3ee;
+  --sidebar-accent-foreground: #1e242e;
+  --sidebar-border: #e8e2da;
+  --sidebar-ring: #325cbd;
+}
+
+/**
+ * Dark ink. The same system inverted: near-black cool ink becomes the
+ * ground, warm paper becomes the text, the single indigo brightens enough
+ * to hold AA on the dark surface. Activated by the ThemeToggle placing
+ * `.dark` on <html>; without it the block is inert.
+ */
+.dark {
+  --background: #15171c;
+  --foreground: #ece9e3;
+  --card: #1b1e24;
+  --card-foreground: #ece9e3;
+  --popover: #1b1e24;
+  --popover-foreground: #ece9e3;
+  --primary: #ece9e3;
+  --primary-foreground: #15171c;
+  --secondary: #22262d;
+  --secondary-foreground: #d5d2cc;
+  --muted: #22262d;
+  --muted-foreground: #9b9ea6;
+  --accent: #282d35;
+  --accent-foreground: #ece9e3;
+  --destructive: #e05a5e;
+  --border: #2b2f37;
+  --input: #2b2f37;
+  --ring: #7d9be8;
+  --sidebar: #1b1e24;
+  --sidebar-foreground: #ece9e3;
+  --sidebar-primary: #ece9e3;
+  --sidebar-primary-foreground: #15171c;
+  --sidebar-accent: #22262d;
+  --sidebar-accent-foreground: #ece9e3;
+  --sidebar-border: #2b2f37;
+  --sidebar-ring: #7d9be8;
 }
 
 @layer base {
@@ -133,8 +170,7 @@
     @apply bg-indigo-500/15 text-indigo-900;
   }
 
-  /* The library canvas is one long scroll inside a page that also scrolls, so a
-     platform-width bar would read as a second frame around the artboard. */
+  /* Keep scrollbars compact inside workspace panels. */
   ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
@@ -166,6 +202,20 @@
     var(--color-slate-300) 1px,
     transparent 1px
   );
+}
+
+@keyframes navigation-progress {
+  from {
+    transform: scaleX(0.08);
+  }
+
+  20% {
+    transform: scaleX(0.5);
+  }
+
+  to {
+    transform: scaleX(0.9);
+  }
 }
 
 /* One rule per animation does not scale — spinners, Radix enter/exit states and

@@ -1,12 +1,19 @@
 import { useCallback, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, Download } from "lucide-react";
-import { Link } from "react-router";
+import { Bot, Download, KeyRound, MoreHorizontal } from "lucide-react";
+import { useNavigate } from "react-router";
 
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import Flex from "@/components/ui/flex";
 import { useWorkspaceSession } from "@/components/workspace-shell/workspace-shell-session-context";
+import AgentsConnectDialog from "@/components/agents-connect-dialog";
 import agentConnectionsService, {
   AgentConnectionServiceError,
   type AgentConnection,
@@ -16,16 +23,14 @@ import agentPoolsService, {
   type AgentPool,
   type AgentPoolRequestStatus,
 } from "@/services/agent-pools";
+import organizationsService from "@/services/organizations";
+import playgroundService from "@/services/playground";
 
-import AgentsPoolCard from "./agents-pool-card";
-import AgentsPoolCardSkeleton from "./agents-pool-card-skeleton";
-
-const AGENTS_POOL_CARD_SKELETONS = [0, 1, 2, 3, 4, 5] as const;
+import AgentsExplorer from "./agents-explorer";
 import AgentsRequestDialog, {
   type RequestFormValues,
 } from "./agents-request-dialog";
 import AgentsRequestsDialog from "./agents-requests-dialog";
-import AgentsConnectDialog from "./agents-connect-dialog";
 import AgentsGatewayKeyDialog from "./agents-gateway-key-dialog";
 
 interface RequestJoinVariables {
@@ -44,11 +49,35 @@ interface PoolMemberVariables {
 }
 
 export default function AgentsRoute() {
+  const navigate = useNavigate();
   const session = useWorkspaceSession();
   const queryClient = useQueryClient();
   const [requestPoolId, setRequestPoolId] = useState<string | null>(null);
   const [reviewPoolId, setReviewPoolId] = useState<string | null>(null);
+  const [gatewayKeyOpen, setGatewayKeyOpen] = useState(false);
+  const refreshAgentData = useCallback(
+    () =>
+      Promise.all(
+        [
+          agentPoolsService.queryKey,
+          agentConnectionsService.queryKey,
+          organizationsService.queryKey,
+          playgroundService.queryKey,
+        ].map((queryKey) =>
+          queryClient.invalidateQueries({
+            queryKey,
+            // Completion polling already supplied the fresh connection. Refetching
+            // it here would trigger onRefreshComplete and invalidate it forever.
+            predicate: (query) =>
+              query.queryKey[1] !== "refresh-status" &&
+              query.queryKey[1] !== "status",
+          }),
+        ),
+      ),
+    [queryClient],
+  );
   const poolsQuery = useQuery({
+    enabled: session.status !== "loading",
     queryFn: agentPoolsService.list,
     queryKey: [...agentPoolsService.queryKey, session.user?.id ?? "guest"],
   });
@@ -78,16 +107,28 @@ export default function AgentsRoute() {
   });
   const refreshMutation = useMutation({
     mutationFn: (poolId: string) => agentConnectionsService.refresh(poolId),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: agentPoolsService.queryKey }),
+    onSuccess: refreshAgentData,
+  });
+  const deletePoolMutation = useMutation({
+    mutationFn: (poolId: string) => agentConnectionsService.disconnect(poolId),
+    onSuccess: async () => {
+      setReviewPoolId(null);
+      await refreshAgentData();
+    },
   });
   const pools = poolsQuery.data ?? [];
   const requestPool = pools.find((pool) => pool.id === requestPoolId) ?? null;
-  const reviewPool = pools.find((pool) => pool.id === reviewPoolId) ?? null;
+  const reviewPool =
+    pools.find(
+      (pool) =>
+        pool.id === reviewPoolId &&
+        pool.owner.username === session.user?.username,
+    ) ?? null;
   const routeError =
     poolsQuery.error ??
     decisionMutation.error ??
     removeMemberMutation.error ??
+    deletePoolMutation.error ??
     refreshMutation.error;
   const errorMessage = routeError
     ? routeError instanceof AgentPoolServiceError ||
@@ -140,18 +181,30 @@ export default function AgentsRoute() {
     return refreshMutation.mutateAsync(reviewPool.id);
   }
 
+  async function deletePool() {
+    if (!reviewPool) return;
+    await deletePoolMutation.mutateAsync(reviewPool.id);
+  }
+
   const refreshPoolData = useCallback(
-    () =>
-      void queryClient.invalidateQueries({
-        queryKey: agentPoolsService.queryKey,
-      }),
-    [queryClient],
+    (connection: AgentConnection) => {
+      queryClient.setQueryData(
+        [
+          ...agentConnectionsService.queryKey,
+          "pool-availability",
+          connection.id,
+        ],
+        connection,
+      );
+      void refreshAgentData();
+    },
+    [queryClient, refreshAgentData],
   );
 
   return (
     <section
       aria-labelledby="agents-title"
-      className="relative isolate min-h-full px-4 pt-10 pb-20 sm:px-6 lg:px-10"
+      className="relative isolate flex min-h-0 flex-1 flex-col overflow-hidden px-4 pt-6 pb-4 sm:px-6 lg:px-8 lg:pt-8"
     >
       <div
         aria-hidden="true"
@@ -159,50 +212,30 @@ export default function AgentsRoute() {
       />
       <div
         aria-hidden="true"
-        className="absolute top-0 right-0 -z-10 size-80 rounded-full bg-indigo-200/30 blur-3xl"
+        className="absolute top-0 right-0 -z-10 size-80 rounded-full bg-primary/10 blur-3xl"
       />
 
-      <div className="mx-auto w-full max-w-6xl">
-        <header className="max-w-3xl">
-          <Flex className="items-center gap-2 font-mono text-xs font-semibold tracking-widest text-indigo-600 uppercase">
-            <Bot aria-hidden="true" className="size-4" />
-            Shared agent accounts
-          </Flex>
-
-          <h1
-            id="agents-title"
-            className="mt-4 font-heading text-3xl font-bold tracking-tight text-balance sm:text-4xl"
-          >
-            Share the bill. Connect your agent.
-          </h1>
-
-          <p className="mt-3 max-w-2xl text-muted-foreground text-sm/relaxed sm:text-base">
-            Find people sharing an account, then connect Codex, Claude Code,
-            Antigravity, Grok, or DeepSeek through the available pool. Browsing
-            is public; login is only required when you request to join.
-          </p>
-        </header>
-
-        <Flex className="mt-10 justify-between gap-4 border-b border-slate-200/90 pb-3">
+      <Flex className="mx-auto min-h-0 w-full max-w-400 flex-1 flex-col">
+        <header className="flex shrink-0 flex-wrap items-end justify-between gap-4 border-b border-border/80 pb-5 sm:gap-6">
           <div>
-            <h2 className="font-heading text-sm font-bold tracking-tight">
-              Account pools
-            </h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              Usage fields adapt to the agent and plan reported by each account.
+            <Flex className="items-center gap-2 text-[10px] font-semibold tracking-widest text-muted-foreground uppercase">
+              <Bot aria-hidden="true" className="size-3.5" />
+              Shared agent accounts
+            </Flex>
+
+            <h1
+              id="agents-title"
+              className="mt-3 font-heading text-3xl font-bold tracking-tight"
+            >
+              Agents
+            </h1>
+
+            <p className="mt-2 max-w-lg text-sm/relaxed text-muted-foreground">
+              Find your provider. Select an account to explore usage and access.
             </p>
           </div>
 
-          <Flex className="flex-wrap items-center justify-end gap-2">
-            <Button asChild className="h-10 px-4" variant="outline">
-              <Link to="/tools?node=gateway">
-                <Download aria-hidden="true" />
-                Install
-              </Link>
-            </Button>
-
-            <AgentsGatewayKeyDialog />
-
+          <Flex className="flex-wrap items-center gap-2">
             <AgentsConnectDialog
               onConnected={() =>
                 void queryClient.invalidateQueries({
@@ -210,45 +243,58 @@ export default function AgentsRoute() {
                 })
               }
             />
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  aria-label="More agent setup options"
+                  className="size-10"
+                  type="button"
+                  variant="outline"
+                >
+                  <MoreHorizontal aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => navigate("/tools?node=gateway")}>
+                  <Download aria-hidden="true" />
+                  Install
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setGatewayKeyOpen(true)}>
+                  <KeyRound aria-hidden="true" />
+                  Gateway Key
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <AgentsGatewayKeyDialog
+              hideTrigger
+              open={gatewayKeyOpen}
+              onOpenChange={setGatewayKeyOpen}
+            />
           </Flex>
-        </Flex>
+        </header>
 
         {errorMessage ? (
-          <Alert className="mt-5" variant="destructive">
+          <Alert className="mt-5 shrink-0" variant="destructive">
             <AlertDescription>{errorMessage}</AlertDescription>
           </Alert>
         ) : null}
 
-        {poolsQuery.isPending ? (
-          <div role="status">
-            <p className="sr-only">Loading connected accounts</p>
-
-            <ul className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {AGENTS_POOL_CARD_SKELETONS.map((skeleton) => (
-                <AgentsPoolCardSkeleton key={skeleton} />
-              ))}
-            </ul>
-          </div>
-        ) : pools.length > 0 ? (
-          <ul className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {pools.map((pool) => (
-              <AgentsPoolCard
-                key={pool.id}
-                currentUsername={session.user?.username ?? null}
-                onCheckRequests={(selectedPool) =>
-                  setReviewPoolId(selectedPool.id)
-                }
-                onRequestJoin={requestJoin}
-                pool={pool}
-              />
-            ))}
-          </ul>
+        {poolsQuery.isPending || pools.length > 0 ? (
+          <AgentsExplorer
+            loading={poolsQuery.isPending}
+            currentUsername={session.user?.username ?? null}
+            onCheckRequests={(selectedPool) => setReviewPoolId(selectedPool.id)}
+            onRequestJoin={requestJoin}
+            pools={pools}
+          />
         ) : (
-          <p className="mt-5 rounded-xl border border-dashed border-zinc-300 p-8 text-center text-sm text-muted-foreground">
+          <p className="mt-5 rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
             No connected accounts yet.
           </p>
         )}
-      </div>
+      </Flex>
 
       <AgentsRequestDialog
         open={requestPool !== null}
@@ -264,10 +310,12 @@ export default function AgentsRoute() {
           decisionMutation.isPending ||
           inviteMutation.isPending ||
           removeMemberMutation.isPending ||
+          deletePoolMutation.isPending ||
           refreshMutation.isPending
         }
         open={reviewPool !== null}
         onDecision={decideRequest}
+        onDelete={deletePool}
         onInvite={inviteMember}
         onOpenChange={(open) => {
           if (!open) setReviewPoolId(null);

@@ -9,8 +9,10 @@ pub struct AppConfig {
     pub credential_encryption_key: [u8; 32],
     pub frontend_origin: HeaderValue,
     pub telegram_service_token: Option<Vec<u8>>,
+    pub codex_client_version: String,
     pub codex_issuer: String,
     pub claude_authorize_url: String,
+    pub claude_client_version: String,
     pub claude_profile_url: String,
     pub claude_redirect_url: String,
     pub claude_token_url: String,
@@ -25,6 +27,9 @@ pub struct AppConfig {
     pub grok_client_id: String,
     pub grok_client_version: String,
     pub deepseek_api_url: String,
+    pub serv_reasoning_url: String,
+    pub serv_reasoning_api_key: Option<String>,
+    pub serv_reasoning_model: String,
 }
 
 #[derive(Debug)]
@@ -77,10 +82,14 @@ impl AppConfig {
                 .ok()
                 .filter(|token| !token.trim().is_empty())
                 .map(String::into_bytes),
+            codex_client_version: env::var("CODEX_CLIENT_VERSION")
+                .unwrap_or_else(|_| "0.156.0".to_owned()),
             codex_issuer: env::var("CODEX_AUTH_ISSUER")
                 .unwrap_or_else(|_| "https://auth.openai.com".to_owned()),
             claude_authorize_url: env::var("CLAUDE_AUTHORIZE_URL")
                 .unwrap_or_else(|_| "https://claude.com/cai/oauth/authorize".to_owned()),
+            claude_client_version: env::var("CLAUDE_CLIENT_VERSION")
+                .unwrap_or_else(|_| "2.1.223".to_owned()),
             claude_profile_url: env::var("CLAUDE_PROFILE_URL")
                 .unwrap_or_else(|_| "https://api.anthropic.com/api/oauth/profile".to_owned()),
             claude_redirect_url: env::var("CLAUDE_REDIRECT_URL")
@@ -117,6 +126,15 @@ impl AppConfig {
                 .unwrap_or_else(|_| "https://api.deepseek.com".to_owned())
                 .trim_end_matches('/')
                 .to_owned(),
+            serv_reasoning_url: env::var("SERV_REASONING_URL")
+                .unwrap_or_else(|_| "https://inference-api.openserv.ai".to_owned())
+                .trim_end_matches('/')
+                .to_owned(),
+            serv_reasoning_api_key: env::var("SERV_REASONING_API_KEY")
+                .ok()
+                .filter(|k| !k.trim().is_empty()),
+            serv_reasoning_model: env::var("SERV_REASONING_MODEL")
+                .unwrap_or_else(|_| "gemini-3.8-flash".to_owned()),
         })
     }
 }
@@ -129,8 +147,10 @@ impl Default for AppConfig {
             credential_encryption_key: [7; 32],
             frontend_origin: HeaderValue::from_static("http://localhost:5173"),
             telegram_service_token: None,
+            codex_client_version: "0.156.0".to_owned(),
             codex_issuer: "https://auth.openai.com".to_owned(),
             claude_authorize_url: "https://claude.com/cai/oauth/authorize".to_owned(),
+            claude_client_version: "2.1.223".to_owned(),
             claude_profile_url: "https://api.anthropic.com/api/oauth/profile".to_owned(),
             claude_redirect_url: "https://platform.claude.com/oauth/code/callback".to_owned(),
             claude_token_url: "https://platform.claude.com/v1/oauth/token".to_owned(),
@@ -147,6 +167,9 @@ impl Default for AppConfig {
             grok_client_id: "b1a00492-073a-47ea-816f-4c329264a828".to_owned(),
             grok_client_version: "1.0.30".to_owned(),
             deepseek_api_url: "https://api.deepseek.com".to_owned(),
+            serv_reasoning_url: "https://inference-api.openserv.ai".to_owned(),
+            serv_reasoning_api_key: None,
+            serv_reasoning_model: "gemini-3.8-flash".to_owned(),
         }
     }
 }

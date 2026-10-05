@@ -4,6 +4,70 @@
  */
 
 export interface paths {
+  "/agent-auth/device": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["start_device_authorization"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/agent-auth/device/decision": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["decide_device_authorization"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/agent-auth/device/pending": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["list_pending_authorizations"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/agent-auth/device/token": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["poll_device_authorization"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/agent-connections": {
     parameters: {
       query?: never;
@@ -308,10 +372,293 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/organization-invitations": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["list_invitations"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/organization-invitations/{invitation_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete: operations["decline_invitation"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/organization-invitations/{invitation_id}/accept": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["accept_invitation"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/organizations": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["list_organizations"];
+    put?: never;
+    post: operations["create_organization"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/organizations/{id}/agents": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["list_agents"];
+    put?: never;
+    post: operations["share_agent"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/organizations/{id}/agents/{connection_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete: operations["unshare_agent"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/organizations/{id}/members": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["list_members"];
+    put?: never;
+    post: operations["organization_invite_member"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/organizations/{id}/members/{username}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete: operations["organization_remove_member"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/organizations/{id}/overview": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["overview"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/organizations/{id}/usage": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["usage"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/playground/chat": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["chat"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/playground/{provider}/accounts/{connection_id}/models": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["models"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/reasoning/authorize": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["authorize_handler"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/reasoning/events": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["list_events"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/reasoning/events/daily": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["daily_stats"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/reasoning/plan": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["plan_handler"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/reasoning/verify": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["verify_handler"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
+    ActionDecision: {
+      allowed: boolean;
+      /** Format: date-time */
+      audited_at: string;
+      boundary_enforced: string;
+      decision_id: string;
+      matched_contract?: string | null;
+      reason: string;
+      reasoner_model: string;
+      status: string;
+    };
     AgentAuthorizationPrompt: {
       authorization_url: string;
       /** Format: date-time */
@@ -324,6 +671,7 @@ export interface components {
     AgentConnection: {
       account_label?: string | null;
       authorization?: null | components["schemas"]["AgentAuthorizationPrompt"];
+      availability_status: string;
       /** Format: date-time */
       created_at: string;
       failure_message?: string | null;
@@ -426,6 +774,15 @@ export interface components {
       recovery_email?: string | null;
       username: string;
     };
+    AuthorizeActionRequest: {
+      action: string;
+      active_contracts?: string[];
+      parameters?: unknown;
+      plan_id?: string | null;
+      step_id?: string | null;
+      target?: string | null;
+      task: string;
+    };
     CompleteAuthorizationRequest: {
       callback_url: string;
     };
@@ -436,15 +793,60 @@ export interface components {
       reason: string;
       telegram: string;
     };
+    CreateOrganization: {
+      description?: string | null;
+      name: string;
+    };
+    CreatePlanRequest: {
+      available_skills?: string[];
+      context_files?: string[];
+      task: string;
+    };
     CreatedGatewayKey: components["schemas"]["GatewayKey"] & {
       key: string;
     };
     DecideAgentPoolJoinRequest: {
       status: components["schemas"]["AgentPoolRequestStatus"];
     };
+    DecideDeviceAuthorization: {
+      /** @description true approves and issues a gateway key; false denies. */
+      approve: boolean;
+      /** @description The short user code shown by the agent, e.g. "XK7P-29QD". */
+      user_code: string;
+    };
+    DeviceAuthorizationStarted: {
+      /** @description Secret the agent polls with. Never shown to the operator. */
+      device_code: string;
+      /** Format: int64 */
+      expires_in_seconds: number;
+      /** Format: int32 */
+      poll_interval_seconds: number;
+      /** @description Short code the operator types or clicks to approve, e.g. "XK7P-29QD". */
+      user_code: string;
+      /** @description Where the operator approves the request. */
+      verification_uri: string;
+    };
+    DeviceAuthorizationToken: {
+      /** @description The gateway key. Present only on the first poll after approval. */
+      key?: string | null;
+      /** @description "pending", "approved" (key present exactly once), or "denied". */
+      status: string;
+    };
     ErrorResponse: {
       code: string;
       message: string;
+    };
+    ExecutionPlan: {
+      /** Format: date-time */
+      created_at: string;
+      intent: string;
+      plan_id: string;
+      prohibited_actions: string[];
+      reasoner_model: string;
+      required_contracts: string[];
+      steps: components["schemas"]["PlanStep"][];
+      summary: string;
+      verification_criteria: string[];
     };
     GatewayKey: {
       /** Format: date-time */
@@ -462,9 +864,232 @@ export interface components {
     InviteAgentPoolMember: {
       username: string;
     };
+    InviteOrganizationMember: {
+      username: string;
+    };
     LoginRequest: {
       password: string;
       username: string;
+    };
+    Organization: {
+      /** Format: date-time */
+      created_at: string;
+      description?: string | null;
+      /** Format: uuid */
+      id: string;
+      name: string;
+      role: string;
+    };
+    OrganizationAgent: {
+      account_label?: string | null;
+      availability_status: string;
+      /** Format: date-time */
+      created_at: string;
+      /** Format: uuid */
+      id: string;
+      owner_username: string;
+      provider: string;
+      /** Format: date-time */
+      rate_limited_until?: string | null;
+    };
+    OrganizationAgentDetails: {
+      account_label?: string | null;
+      availability_status: string;
+      /** Format: date-time */
+      created_at: string;
+      /** Format: uuid */
+      id: string;
+      owner_username: string;
+      plan: string;
+      provider: string;
+      /** Format: date-time */
+      rate_limited_until?: string | null;
+      usage: components["schemas"]["AgentPoolUsageMetric"][];
+    };
+    OrganizationAgentListQuery: {
+      include_usage?: boolean | null;
+    };
+    OrganizationInvitation: {
+      /** Format: date-time */
+      created_at: string;
+      /** Format: uuid */
+      id: string;
+      invited_by_username?: string | null;
+      /** Format: uuid */
+      organization_id: string;
+      organization_name: string;
+    };
+    OrganizationMember: {
+      /**
+       * Format: uuid
+       * @description The Hub user ID, also used by the Usage member_id filter.
+       */
+      id: string;
+      /** Format: date-time */
+      invited_at: string;
+      invited_by_username?: string | null;
+      /** Format: date-time */
+      joined_at?: string | null;
+      role: string;
+      status: string;
+      username: string;
+    };
+    OrganizationOverview: {
+      /** Format: int64 */
+      agent_count: number;
+      agents: components["schemas"]["OrganizationAgent"][];
+      daily_usage: components["schemas"]["OrganizationUsageDay"][];
+      /** Format: int64 */
+      known_cached_tokens: number;
+      /** Format: int64 */
+      known_input_tokens: number;
+      /** Format: int64 */
+      known_output_tokens: number;
+      /** Format: int64 */
+      member_count: number;
+      organization: components["schemas"]["Organization"];
+      /** Format: int64 */
+      period_days: number;
+      /** Format: int64 */
+      requests: number;
+      /** Format: int64 */
+      token_known_requests: number;
+    };
+    OrganizationPeriodQuery: {
+      /** Format: int64 */
+      days?: number | null;
+    };
+    OrganizationUsage: {
+      breakdown: components["schemas"]["OrganizationUsageBreakdown"][];
+      daily_usage: components["schemas"]["OrganizationUsageDay"][];
+      /** Format: int64 */
+      known_cached_tokens: number;
+      /** Format: int64 */
+      known_input_tokens: number;
+      /** Format: int64 */
+      known_output_tokens: number;
+      /** Format: int64 */
+      period_days: number;
+      /** Format: int64 */
+      requests: number;
+      /** Format: int64 */
+      token_known_requests: number;
+    };
+    OrganizationUsageBreakdown: {
+      /** Format: uuid */
+      connection_id?: string | null;
+      /** Format: int64 */
+      known_cached_tokens: number;
+      /** Format: int64 */
+      known_input_tokens: number;
+      /** Format: int64 */
+      known_output_tokens: number;
+      /** Format: uuid */
+      member_id: string;
+      model?: string | null;
+      provider: string;
+      /** Format: int64 */
+      requests: number;
+      /** Format: int64 */
+      token_known_requests: number;
+      username: string;
+    };
+    OrganizationUsageDay: {
+      date: string;
+      /** Format: int64 */
+      known_total_tokens: number;
+      /** Format: int64 */
+      requests: number;
+      /** Format: int64 */
+      token_known_requests: number;
+    };
+    OrganizationUsageQuery: {
+      /** Format: uuid */
+      connection_id?: string | null;
+      /** Format: int64 */
+      days?: number | null;
+      /** Format: uuid */
+      member_id?: string | null;
+      model?: string | null;
+    };
+    PendingDeviceAuthorization: {
+      agent_label: string;
+      /** Format: date-time */
+      created_at: string;
+      /** Format: date-time */
+      expires_at: string;
+      user_code: string;
+    };
+    PlanStep: {
+      action?: string;
+      depends_on?: string[];
+      id: string;
+      rationale?: string | null;
+      risk?: string;
+      target?: string | null;
+      title?: string;
+    };
+    PlaygroundAttachment:
+      | {
+          data: string;
+          /** @enum {string} */
+          kind: "image";
+          media_type: string;
+          name: string;
+        }
+      | {
+          /** @enum {string} */
+          kind: "text";
+          name: string;
+          text: string;
+        };
+    PlaygroundChatRequest: {
+      /** Format: uuid */
+      connection_id: string;
+      messages: components["schemas"]["PlaygroundMessage"][];
+      model: string;
+      /** Format: uuid */
+      organization_id?: string | null;
+      provider: components["schemas"]["AgentProvider"];
+    };
+    PlaygroundMessage: {
+      attachments?: components["schemas"]["PlaygroundAttachment"][];
+      content: string;
+      role: components["schemas"]["PlaygroundRole"];
+    };
+    PlaygroundModel: {
+      id: string;
+      name: string;
+    };
+    /** @enum {string} */
+    PlaygroundRole: "user" | "assistant";
+    PollDeviceAuthorization: {
+      device_code: string;
+    };
+    ReasoningDailyStat: {
+      /** Format: int64 */
+      allowed: number;
+      /** Format: int64 */
+      blocked: number;
+      /** Format: int64 */
+      certified: number;
+      /** @description Calendar day in ISO format, e.g. "2026-09-26". */
+      day: string;
+      /** Format: int64 */
+      plans: number;
+      /** Format: int64 */
+      total: number;
+    };
+    ReasoningEvent: {
+      /** Format: date-time */
+      created_at: string;
+      detail: string;
+      /** Format: uuid */
+      id: string;
+      kind: string;
+      outcome: string;
+      reasoner_model: string;
+      task: string;
     };
     RegisterRequest: {
       password: string;
@@ -474,8 +1099,36 @@ export interface components {
     SessionResponse: {
       user: components["schemas"]["AuthenticatedUser"];
     };
+    ShareOrganizationAgent: {
+      /** Format: uuid */
+      connection_id: string;
+    };
     StartAgentConnectionRequest: {
       provider: components["schemas"]["AgentProvider"];
+    };
+    StartDeviceAuthorization: {
+      /** @description Human-readable label the approving operator sees, e.g. "Claude Code on MacBook". */
+      agent_label: string;
+    };
+    VerificationResult: {
+      /** Format: float */
+      confidence: number;
+      findings: string[];
+      passed: boolean;
+      reasoner_model: string;
+      recommendation: string;
+      unsatisfied_criteria: string[];
+      verification_id: string;
+      /** Format: date-time */
+      verified_at: string;
+    };
+    VerifyOutcomeRequest: {
+      completed_steps: string[];
+      evidence: string;
+      modified_files?: string[];
+      plan_id?: string | null;
+      task: string;
+      test_output?: string | null;
     };
   };
   responses: never;
@@ -486,6 +1139,141 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+  start_device_authorization: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["StartDeviceAuthorization"];
+      };
+    };
+    responses: {
+      /** @description Device authorization started; poll with the device code */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DeviceAuthorizationStarted"];
+        };
+      };
+      /** @description Invalid agent label */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
+  decide_device_authorization: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["DecideDeviceAuthorization"];
+      };
+    };
+    responses: {
+      /** @description Authorization approved or denied */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Hub login required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      /** @description Unknown, expired, or already-decided code */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
+  list_pending_authorizations: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Pending authorization requests awaiting this operator */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PendingDeviceAuthorization"][];
+        };
+      };
+      /** @description Hub login required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
+  poll_device_authorization: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PollDeviceAuthorization"];
+      };
+    };
+    responses: {
+      /** @description Current authorization status; the key appears exactly once after approval */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DeviceAuthorizationToken"];
+        };
+      };
+      /** @description Unknown or expired device code */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
   list_connections: {
     parameters: {
       query?: never;
@@ -652,7 +1440,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Connection credential removed */
+      /** @description Connected account pool deleted */
       204: {
         headers: {
           [name: string]: unknown;
@@ -873,7 +1661,7 @@ export interface operations {
       path: {
         /** @description Connected account identifier */
         connection_id: string;
-        /** @description Hub William username */
+        /** @description Bew Harness username */
         username: string;
       };
       cookie?: never;
@@ -1232,6 +2020,573 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["HealthResponse"];
+        };
+      };
+    };
+  };
+  list_invitations: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Viewer's pending organization invitations */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OrganizationInvitation"][];
+        };
+      };
+    };
+  };
+  decline_invitation: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Pending membership ID */
+        invitation_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Invitation declined */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  accept_invitation: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Pending membership ID */
+        invitation_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Invitation accepted */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Organization"];
+        };
+      };
+    };
+  };
+  list_organizations: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Organizations where the viewer is an accepted member */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Organization"][];
+        };
+      };
+    };
+  };
+  create_organization: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateOrganization"];
+      };
+    };
+    responses: {
+      /** @description Organization created */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Organization"];
+        };
+      };
+    };
+  };
+  list_agents: {
+    parameters: {
+      query?: {
+        /** @description Fetch live provider quota metrics; defaults to false */
+        include_usage?: boolean;
+      };
+      header?: never;
+      path: {
+        /** @description Organization ID */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Shared connected agents and provider usage */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OrganizationAgentDetails"][];
+        };
+      };
+    };
+  };
+  share_agent: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Organization ID */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ShareOrganizationAgent"];
+      };
+    };
+    responses: {
+      /** @description Owned agent shared with organization */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OrganizationAgent"];
+        };
+      };
+    };
+  };
+  unshare_agent: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Organization ID */
+        id: string;
+        /** @description Owned connection ID */
+        connection_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Agent unshared */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  list_members: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Organization ID */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Accepted and pending organization members */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OrganizationMember"][];
+        };
+      };
+    };
+  };
+  organization_invite_member: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Organization ID */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["InviteOrganizationMember"];
+      };
+    };
+    responses: {
+      /** @description Existing Hub user invited */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OrganizationMember"];
+        };
+      };
+    };
+  };
+  organization_remove_member: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Organization ID */
+        id: string;
+        /** @description Hub username */
+        username: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Member removed or invitation canceled */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  overview: {
+    parameters: {
+      query?: {
+        /** @description UTC calendar days, 1 through 365; defaults to 30 */
+        days?: number;
+      };
+      header?: never;
+      path: {
+        /** @description Organization ID */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Organization overview */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OrganizationOverview"];
+        };
+      };
+    };
+  };
+  usage: {
+    parameters: {
+      query?: {
+        /** @description UTC calendar days, 1 through 365; defaults to 30 */
+        days?: number;
+        /** @description Hub user ID */
+        member_id?: string;
+        /** @description Shared connection ID */
+        connection_id?: string;
+        /** @description Exact upstream model ID */
+        model?: string;
+      };
+      header?: never;
+      path: {
+        /** @description Organization ID */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Organization usage recorded by accepted upstream requests */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OrganizationUsage"];
+        };
+      };
+    };
+  };
+  chat: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PlaygroundChatRequest"];
+      };
+    };
+    responses: {
+      /** @description Provider-native text event stream */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "text/event-stream": string;
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
+  models: {
+    parameters: {
+      query?: {
+        /** @description Organization whose shared agent should be used */
+        organization_id?: string;
+      };
+      header?: never;
+      path: {
+        provider: components["schemas"]["AgentProvider"];
+        connection_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PlaygroundModel"][];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
+  authorize_handler: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AuthorizeActionRequest"];
+      };
+    };
+    responses: {
+      /** @description Action authorized or blocked based on contract boundaries */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ActionDecision"];
+        };
+      };
+      /** @description Gateway key or active authorization required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
+  list_events: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Latest reasoning checkpoint events, newest first */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReasoningEvent"][];
+        };
+      };
+    };
+  };
+  daily_stats: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Per-day reasoning checkpoint counts for the last 365 days */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReasoningDailyStat"][];
+        };
+      };
+    };
+  };
+  plan_handler: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreatePlanRequest"];
+      };
+    };
+    responses: {
+      /** @description Structured execution plan generated by SERV Reasoning */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ExecutionPlan"];
+        };
+      };
+      /** @description Gateway key or active authorization required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
+  verify_handler: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["VerifyOutcomeRequest"];
+      };
+    };
+    responses: {
+      /** @description Outcome verification verdict evaluated by SERV Reasoning */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["VerificationResult"];
+        };
+      };
+      /** @description Gateway key or active authorization required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
         };
       };
     };

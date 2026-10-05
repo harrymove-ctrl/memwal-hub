@@ -1,24 +1,29 @@
+import { useQuery } from "@tanstack/react-query";
 import { Link, NavLink, type NavLinkRenderProps } from "react-router";
 import { tv } from "tailwind-variants";
 
 import Center from "@/components/ui/center";
+import ImageFallBack from "@/components/ui/image-fallback";
+import organizationsService from "@/services/organizations";
+import ThemeToggle from "@/components/ui/theme-toggle";
 import assetPath from "@/utils/utils.asset-path";
 
 import WorkspaceShellAccount from "./workspace-shell-account";
-import { navigationItems } from "./workspace-shell-navigation-items";
+import { useWorkspaceSession } from "./workspace-shell-session-context";
+import {
+  navigationItems,
+  organizationNavigationItems,
+} from "./workspace-shell-navigation-items";
 
 const navigationLinkVariants = tv({
   base: "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-xs font-medium tracking-wide transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden",
   variants: {
     active: {
-      true: "bg-zinc-900 text-white shadow-xs",
-      false: "text-muted-foreground hover:bg-zinc-100/80 hover:text-foreground",
+      true: "bg-primary text-primary-foreground shadow-xs",
+      false: "text-muted-foreground hover:bg-muted/80 hover:text-foreground",
     },
-    // `pointer-events-none` is safe here in a way it would not be on a link:
-    // this renders as a span, so there is nothing to focus and nothing Enter
-    // can follow — the attribute only has to stop the pointer.
     disabled: {
-      true: "pointer-events-none cursor-default text-muted-foreground/50",
+      true: "cursor-not-allowed text-muted-foreground hover:bg-transparent hover:text-muted-foreground",
     },
   },
 });
@@ -26,7 +31,8 @@ const navigationLinkVariants = tv({
 const navigationIconVariants = tv({
   base: "size-4",
   variants: {
-    active: { true: "text-white", false: "text-zinc-500" },
+    active: { true: "text-primary-foreground", false: "text-muted-foreground" },
+    disabled: { true: "text-muted-foreground" },
   },
 });
 
@@ -44,17 +50,18 @@ function WorkspaceBrand({ onNavigate }: WorkspaceBrandProps) {
       <Center className="justify-between">
         <Center>
           <Center className="size-10">
-            <img
+            <ImageFallBack
               src={assetPath("logo.png")}
               alt=""
+              fallback="HW"
               className="pointer-events-none size-16 object-cover"
             />
           </Center>
 
-          <p className="text-xs">Hub-William</p>
+          <p className="text-xs">Bew-Harness</p>
         </Center>
 
-        <div className="rounded border border-zinc-200/80 bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] text-zinc-700">
+        <div className="rounded border border-border/80 bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground">
           v1.4
         </div>
       </Center>
@@ -68,7 +75,7 @@ interface WorkspaceNavigationProps {
 
 function WorkspaceNavigation({ onNavigate }: WorkspaceNavigationProps) {
   return (
-    <nav aria-label="Workspace" className="flex-1">
+    <nav aria-label="Workspace">
       <div className="space-y-1">
         <p className="px-2 pb-2 font-mono text-[10px] tracking-widest text-muted-foreground uppercase">
           Workspace
@@ -77,18 +84,76 @@ function WorkspaceNavigation({ onNavigate }: WorkspaceNavigationProps) {
         {navigationItems.map((item) => {
           const Icon = item.icon;
 
-          // A span, not a dimmed NavLink: a link that only looks disabled is
-          // still focusable and still followed by Enter.
-          if (item.isDisabled) {
+          return (
+            <NavLink
+              key={item.href}
+              to={item.href}
+              onClick={onNavigate}
+              className={({ isActive }: NavLinkRenderProps) =>
+                navigationLinkVariants({ active: isActive })
+              }
+            >
+              {({ isActive }: NavLinkRenderProps) => (
+                <>
+                  <Icon
+                    aria-hidden={true}
+                    className={navigationIconVariants({ active: isActive })}
+                  />
+                  <span>{item.label}</span>
+                </>
+              )}
+            </NavLink>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
+
+interface OrganizationNavigationProps {
+  onNavigate?: () => void;
+}
+
+function OrganizationNavigation({ onNavigate }: OrganizationNavigationProps) {
+  const session = useWorkspaceSession();
+  const userId = session.user?.id;
+  const organizationsQuery = useQuery({
+    enabled: Boolean(userId),
+    queryFn: organizationsService.list,
+    queryKey: [...organizationsService.queryKey, userId ?? "guest"],
+  });
+  const canOpenSections = Boolean(organizationsQuery.data?.length);
+
+  return (
+    <nav aria-label="Organization">
+      <p className="px-2 pb-2 font-mono text-[10px] tracking-widest text-muted-foreground uppercase">
+        Organization
+      </p>
+
+      <div className="space-y-1">
+        {organizationNavigationItems.map((item) => {
+          const Icon = item.icon;
+
+          if (item.href !== "/organization" && !canOpenSections) {
             return (
-              <span
+              <button
                 key={item.href}
-                aria-disabled="true"
-                className={navigationLinkVariants({ disabled: true })}
+                className={navigationLinkVariants({
+                  active: false,
+                  disabled: true,
+                })}
+                disabled
+                type="button"
               >
-                <Icon aria-hidden={true} className="size-4 text-zinc-300" />
+                <Icon
+                  aria-hidden={true}
+                  className={navigationIconVariants({
+                    active: false,
+                    disabled: true,
+                  })}
+                />
                 <span>{item.label}</span>
-              </span>
+              </button>
             );
           }
 
@@ -96,6 +161,7 @@ function WorkspaceNavigation({ onNavigate }: WorkspaceNavigationProps) {
             <NavLink
               key={item.href}
               to={item.href}
+              end={item.href === "/organization"}
               onClick={onNavigate}
               className={({ isActive }: NavLinkRenderProps) =>
                 navigationLinkVariants({ active: isActive })
@@ -136,11 +202,22 @@ export default function WorkspaceShellSidebar({
 }: WorkspaceShellSidebarProps) {
   return (
     <div className="flex h-full flex-col p-4">
-      <div className="mb-4 border-b border-zinc-100 pb-6">
+      <div className="mb-4 border-b border-border pb-6">
         <WorkspaceBrand onNavigate={onNavigate} />
       </div>
 
-      <WorkspaceNavigation onNavigate={onNavigate} />
+      <div className="flex-1 space-y-7 overflow-y-auto">
+        <WorkspaceNavigation onNavigate={onNavigate} />
+
+        <OrganizationNavigation onNavigate={onNavigate} />
+      </div>
+
+      <div className="mb-2 flex items-center justify-between px-1">
+        <span className="font-mono text-[10px] tracking-widest text-muted-foreground uppercase">
+          Theme
+        </span>
+        <ThemeToggle />
+      </div>
 
       <WorkspaceShellAccount onNavigate={onNavigate} />
     </div>

@@ -1,3 +1,4 @@
+mod agent_auth;
 mod agent_pools;
 mod auth;
 mod config;
@@ -5,11 +6,15 @@ mod connections;
 mod error;
 mod gateway;
 mod health;
+mod memory;
 mod openapi;
-mod pool_share;
+mod organizations;
+mod playground;
+pub mod reasoning;
 mod telegram;
 mod telegram_catalogue;
 mod usage;
+mod wallet_signature;
 
 use std::time::Duration;
 
@@ -37,13 +42,18 @@ pub use agent_pools::{
 use agent_pools::{
     create_request, decide_request, invite_member, list as list_agent_pools, remove_member,
 };
-pub use auth::{AuthenticatedUser, LoginRequest, RegisterRequest, SessionResponse};
-use auth::{login, logout, refresh, register, session};
+pub use auth::{
+    AuthenticatedUser, LoginRequest, RegisterRequest, SessionResponse, WalletLoginRequest,
+    WalletNonceRequest, WalletNonceResponse,
+};
+use auth::{login, logout, refresh, register, session, wallet_login, wallet_nonce};
 pub use config::AppConfig;
 pub use connections::{
     AgentConnection, AgentConnectionStatus, AgentProvider, CompleteAuthorizationRequest,
-    ConnectDeepseekRequest, ProviderCredentialRefreshSummary, StartAgentConnectionRequest,
-    refresh_due_provider_credentials, refresh_stored_connection_metadata,
+    ConnectDeepseekRequest, ProviderCredentialRefreshResult, ProviderCredentialRefreshStatus,
+    ProviderCredentialRefreshSummary, StartAgentConnectionRequest,
+    refresh_all_provider_credentials, refresh_due_provider_credentials,
+    refresh_nightly_provider_credentials, refresh_stored_connection_metadata,
 };
 use connections::{
     complete_authorization, connect_deepseek, disconnect, get_connection, list_connections,
@@ -59,6 +69,13 @@ use gateway::{
 pub use health::HealthResponse;
 use health::health;
 pub use openapi::ApiDoc;
+pub use organizations::{
+    CreateOrganization, InviteOrganizationMember, Organization, OrganizationAgent,
+    OrganizationAgentDetails, OrganizationAgentListQuery, OrganizationInvitation,
+    OrganizationMember, OrganizationOverview, OrganizationPeriodQuery, OrganizationUsage,
+    OrganizationUsageBreakdown, OrganizationUsageDay, OrganizationUsageQuery,
+    ShareOrganizationAgent,
+};
 pub use telegram::{
     CreateTelegramOrder, SepayResult, SepayTransaction, TelegramAudience, TelegramOrder,
 };
@@ -72,6 +89,19 @@ pub use telegram_catalogue::{
 };
 use telegram_catalogue::{
     adjust_product, catalogue, create_product, full_catalogue, get_product, restock_product,
+};
+pub use reasoning::{
+    ActionDecision, AuthorizeActionRequest, CreatePlanRequest, ExecutionPlan, PlanStep,
+    ReasoningDailyStat, ReasoningEvent, VerificationResult, VerifyOutcomeRequest,
+};
+use reasoning::{authorize_handler, daily_stats, list_events, plan_handler, verify_handler};
+pub use agent_auth::{
+    DecideDeviceAuthorization, DeviceAuthorizationStarted, DeviceAuthorizationToken,
+    PendingDeviceAuthorization, PollDeviceAuthorization, StartDeviceAuthorization,
+};
+use agent_auth::{
+    decide_device_authorization, list_pending_authorizations, poll_device_authorization,
+    start_device_authorization,
 };
 
 #[derive(Clone)]
@@ -89,9 +119,9 @@ pub fn gateway_http_client() -> Result<Client, reqwest::Error> {
         .build()
 }
 
-pub fn app(state: AppState) -> Router {
-    let mut browser_origins = vec![state.config.frontend_origin.clone()];
-    if !state.config.cookie_secure {
+fn browser_origins(config: &AppConfig) -> Vec<axum::http::HeaderValue> {
+    let mut browser_origins = vec![config.frontend_origin.clone()];
+    if !config.cookie_secure {
         for origin in [
             "http://localhost:5173".parse().expect("valid local origin"),
             "http://127.0.0.1:5173".parse().expect("valid local origin"),
@@ -99,16 +129,29 @@ pub fn app(state: AppState) -> Router {
             "http://127.0.0.1:5174".parse().expect("valid local origin"),
             "http://localhost:3000".parse().expect("valid local origin"),
             "http://127.0.0.1:3000".parse().expect("valid local origin"),
+            "http://localhost:4173".parse().expect("valid local origin"),
+            "http://127.0.0.1:4173".parse().expect("valid local origin"),
+            "http://localhost:5188".parse().expect("valid local origin"),
+            "http://127.0.0.1:5188".parse().expect("valid local origin"),
         ] {
             if !browser_origins.contains(&origin) {
                 browser_origins.push(origin);
             }
         }
     }
+    browser_origins
+}
+
+pub fn app(state: AppState) -> Router {
     let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::list(browser_origins))
+        .allow_origin(AllowOrigin::list(browser_origins(&state.config)))
         .allow_methods([Method::GET, Method::POST, Method::DELETE])
-        .allow_headers([AUTHORIZATION, CONTENT_TYPE])
+        .allow_headers([
+            AUTHORIZATION,
+            CONTENT_TYPE,
+            axum::http::HeaderName::from_static("x-serv-api-key"),
+            axum::http::HeaderName::from_static("x-serv-model"),
+        ])
         .allow_credentials(true);
 
     let gateway_routes = Router::new()
@@ -139,7 +182,14 @@ pub fn app(state: AppState) -> Router {
         .route("/auth/login", post(login))
         .route("/auth/session", get(session))
         .route("/auth/logout", post(logout))
+        .route("/memory/session", get(memory::session))
+        .route("/memory/walrus", post(memory::save).delete(memory::clear))
+        .route("/memory/recall", post(memory::recall))
+        .route("/memory/remember", post(memory::remember))
+        .route("/memory/console/report", post(memory::console_report))
         .route("/auth/refresh", post(refresh))
+        .route("/auth/wallet/nonce", post(wallet_nonce))
+        .route("/auth/wallet/login", post(wallet_login))
         .route("/internal/telegram/contacts", post(observe_contact))
         .route(
             "/internal/telegram/contacts/{telegram_user_id}",
@@ -183,6 +233,40 @@ pub fn app(state: AppState) -> Router {
         )
         .route("/agent-pools", get(list_agent_pools))
         .route(
+            "/organizations",
+            get(organizations::list_organizations).post(organizations::create_organization),
+        )
+        .route(
+            "/organization-invitations",
+            get(organizations::list_invitations),
+        )
+        .route(
+            "/organization-invitations/{invitation_id}/accept",
+            post(organizations::accept_invitation),
+        )
+        .route(
+            "/organization-invitations/{invitation_id}",
+            axum::routing::delete(organizations::decline_invitation),
+        )
+        .route("/organizations/{id}/overview", get(organizations::overview))
+        .route(
+            "/organizations/{id}/agents",
+            get(organizations::list_agents).post(organizations::share_agent),
+        )
+        .route(
+            "/organizations/{id}/agents/{connection_id}",
+            axum::routing::delete(organizations::unshare_agent),
+        )
+        .route(
+            "/organizations/{id}/members",
+            get(organizations::list_members).post(organizations::invite_member),
+        )
+        .route(
+            "/organizations/{id}/members/{username}",
+            axum::routing::delete(organizations::remove_member),
+        )
+        .route("/organizations/{id}/usage", get(organizations::usage))
+        .route(
             "/agent-pools/{connection_id}/requests",
             post(create_request),
         )
@@ -212,6 +296,34 @@ pub fn app(state: AppState) -> Router {
         )
         .route("/gateway-keys", get(list_keys).post(create_key))
         .route("/gateway-keys/{key_id}", axum::routing::delete(revoke_key))
+        .route("/reasoning/plan", post(plan_handler))
+        .route("/reasoning/authorize", post(authorize_handler))
+        .route("/reasoning/verify", post(verify_handler))
+        .route("/reasoning/events", get(list_events))
+        .route("/reasoning/events/daily", get(daily_stats))
+        .route("/agent-auth/device", post(start_device_authorization))
+        .route("/agent-auth/device/token", post(poll_device_authorization))
+        .route(
+            "/agent-auth/device/pending",
+            get(list_pending_authorizations),
+        )
+        .route(
+            "/agent-auth/device/decision",
+            post(decide_device_authorization),
+        )
+        .route(
+            "/playground/{provider}/accounts/{connection_id}/models",
+            get(playground::models),
+        )
+        .merge(
+            Router::new()
+                .route("/playground/chat", post(playground::chat))
+                .layer(DefaultBodyLimit::max(32 * 1024 * 1024))
+                .layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    playground::authorize_chat,
+                )),
+        )
         .merge(gateway_routes)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .layer(cors)
@@ -362,6 +474,8 @@ mod tests {
             "http://127.0.0.1:5174",
             "http://localhost:3000",
             "http://127.0.0.1:3000",
+            "http://localhost:4173",
+            "http://127.0.0.1:4173",
         ] {
             let response = service
                 .clone()
@@ -400,5 +514,59 @@ mod tests {
                 .get("access-control-allow-origin")
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn reasoning_endpoints_require_authorization() {
+        let state = AppState {
+            config: AppConfig::default(),
+            http: Client::new(),
+            gateway_http: Client::new(),
+            pool: PgPoolOptions::new()
+                .connect_lazy("postgres://localhost/hub_william_test")
+                .expect("test database URL should parse"),
+        };
+
+        let response = app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/reasoning/plan")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"task":"fix bug"}"#))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("response should arrive");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let response = app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/reasoning/authorize")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"task":"fix bug","action":"push"}"#))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("response should arrive");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let response = app(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/reasoning/verify")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"task":"fix bug","completed_steps":[],"evidence":"none"}"#))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("response should arrive");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }
