@@ -23,6 +23,13 @@ if (input.action === "verify") {
       detail: `Delegate verified. Public key ${await memwal.getPublicKeyHex()}. This does not prove owner-wallet possession.`,
     }),
   );
+} else if (input.action === "remember") {
+  const saved = await memwal.rememberAndWait(input.text, undefined, { timeoutMs: 20000 });
+  process.stdout.write(JSON.stringify({
+    status: "saved",
+    memories: [],
+    detail: `Memory accepted the fact. Job status ${saved?.status ?? "unknown"}. Search visibility can lag storage completion. This is not a Console upload.`,
+  }));
 } else {
   const result = await memwal.recall({
     query: input.query,

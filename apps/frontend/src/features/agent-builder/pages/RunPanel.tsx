@@ -2,6 +2,7 @@ import { ArrowDown, ArrowUp, Check, ChevronRight, Grip, Info, Paperclip, RotateC
 import { useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { AppIcon } from "../components/AppIcon";
 import type { AgentExample, RunEvent, RunState } from "../domain/types";
+import { DiscoveryFlow } from "./DiscoveryFlow";
 import "./run.css";
 
 interface Props {
@@ -12,12 +13,13 @@ interface Props {
   onRetry: () => void;
   onSend: (text: string) => void;
   demo: boolean;
-
+  discovery?: boolean;
+  onNotify: (message: string) => void;
 }
 
 const NEAR_BOTTOM_PX = 48;
 
-export function RunPanel({ run, busy, onStop, onRetry, onSend }: Props) {
+export function RunPanel({ run, busy, onStop, onRetry, onSend, discovery, onNotify }: Props) {
   const scroller = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
   const [text, setText] = useState("");
@@ -76,6 +78,7 @@ export function RunPanel({ run, busy, onStop, onRetry, onSend }: Props) {
         <div className="run-events">
 
           {groupEvents(run.events).map((item) => <EventView key={item.key} item={item} />)}
+          {discovery && onNotify ? <DiscoveryFlow onNotify={onNotify} /> : null}
           {run.status === "failed" ? (
             <div className="run-error" role="alert"><AlertCircle size={14} /> {run.error}</div>
           ) : null}

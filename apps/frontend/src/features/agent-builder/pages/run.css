@@ -54,7 +54,11 @@
 .send:active:not(:disabled) { transform: scale(0.94); }
 .files { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .files li { display: inline-flex; align-items: center; gap: 4px; padding: 0 2px 0 8px; border: 1px solid var(--line-2); border-radius: 6px; }
-.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.discovery { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.discovery h2 { margin: 8px 0 0; font-size: 13px; font-weight: 500; }
+.discovery-files, .discovery-findings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.discovery-findings li { border: 1px solid var(--line); border-radius: var(--r); padding: 8px; }
+.discovery-findings li[data-state="dismissed"] { opacity: 0.45; }
 
 @media (prefers-reduced-motion: reduce) {
   .run-progress[data-active="true"] svg, .spin { animation: none; }

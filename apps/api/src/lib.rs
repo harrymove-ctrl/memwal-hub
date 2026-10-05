@@ -185,6 +185,8 @@ pub fn app(state: AppState) -> Router {
         .route("/memory/session", get(memory::session))
         .route("/memory/walrus", post(memory::save).delete(memory::clear))
         .route("/memory/recall", post(memory::recall))
+        .route("/memory/remember", post(memory::remember))
+        .route("/memory/console/report", post(memory::console_report))
         .route("/auth/refresh", post(refresh))
         .route("/auth/wallet/nonce", post(wallet_nonce))
         .route("/auth/wallet/login", post(wallet_login))

@@ -114,6 +114,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
               <button type="button" className="btn btn-primary" disabled={busy || !address || !accountId.trim() || !delegateKey.trim()} onClick={() => void save()}>{busy ? "Saving" : "Save"}</button>
             </div>
           </section>
+          <ConsoleCustody />
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
@@ -129,6 +130,31 @@ class WalletBoundary extends Component<{ children: ReactNode }, { failed: boolea
     if (this.state.failed) return <p className="hint">Wallet sign-in could not open. Memory settings below still work.</p>;
     return this.props.children;
   }
+}
+
+function ConsoleCustody() {
+  const [mode, setMode] = useState("this application");
+  const [stored, setStored] = useState(false);
+  const [apiKey, setApiKey] = useState("");
+  const [serviceKey, setServiceKey] = useState("");
+  return (
+    <section className="settings-card">
+      <div className="settings-card-head">
+        <h2 className="thumb-title"><AppIcon app="console" size={20} /> Walrus Console</h2>
+        <span className="badge amber">Not connected</span>
+      </div>
+      <p className="hint">Console encrypts private files before upload. The selected custody mode determines whether encryption and decryption happen in this application or through the local MCP client. This application does not claim it cannot read a file it encrypts. Saving these fields does not upload a file and does not show the keys again.</p>
+      <label className="field">Custody mode
+        <select className="input" value={mode} onChange={(event) => setMode(event.target.value)}>
+          <option>this application</option>
+          <option>local MCP client</option>
+        </select>
+      </label>
+      <label className="field">API key<input className="input" type="password" autoComplete="off" value={stored ? "" : apiKey} placeholder={stored ? "Accepted. Not shown again." : ""} onChange={(event) => setApiKey(event.target.value)} /></label>
+      <label className="field">Service private key<input className="input" type="password" autoComplete="off" value={stored ? "" : serviceKey} placeholder={stored ? "Accepted. Not shown again." : ""} onChange={(event) => setServiceKey(event.target.value)} /></label>
+      <button type="button" className="btn" onClick={() => { setStored(Boolean(apiKey || serviceKey)); setApiKey(""); setServiceKey(""); }}>Accept keys without showing them again</button>
+    </section>
+  );
 }
 
 function WalletSignIn() {

@@ -121,7 +121,8 @@ export function AgentPage({ ctx, service }: { ctx: ShellCtx; service: RunService
             onStop={stop}
             onRetry={() => start(agent.example?.prompt ?? null)}
             onSend={(t) => start(t)}
-
+            discovery={agentId === "product-discovery"}
+            onNotify={ctx.notify}
             demo={active.mode === "demo"}
           />
         ) : null}

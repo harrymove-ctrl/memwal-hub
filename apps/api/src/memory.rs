@@ -345,6 +345,47 @@ async fn run_sdk(settings: &StoredWalrus, query: &str, action: &str) -> Result<M
             .collect(),
     })
 }
+#[derive(Debug, Deserialize)]
+pub struct RememberBody {
+    pub text: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SaveAttempt {
+    pub status: String,
+    pub detail: String,
+}
+
+pub async fn remember(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Json(body): Json<RememberBody>,
+) -> Result<Json<SaveAttempt>, ApiError> {
+    let Some(user_id) = optional_authenticated_user_id(&state, &jar).await? else {
+        return Ok(Json(SaveAttempt { status: "failed".into(), detail: "Walrus Memory is not connected. Sign in before saving a finding.".into() }));
+    };
+    let text = body.text.trim();
+    if text.is_empty() {
+        return Ok(Json(SaveAttempt { status: "failed".into(), detail: "Nothing was approved to save.".into() }));
+    }
+    let Some(settings) = load_settings(&state, user_id).await? else {
+        return Ok(Json(SaveAttempt { status: "failed".into(), detail: "Walrus Memory is not connected. No fact was written.".into() }));
+    };
+    if settings.status != "verified" {
+        return Ok(Json(SaveAttempt { status: "failed".into(), detail: "Walrus Memory needs reconnect. No fact was written.".into() }));
+    }
+    match run_sdk(&settings, text, "remember").await {
+        Ok(result) => Ok(Json(SaveAttempt { status: "saved".into(), detail: result.detail })),
+        Err(error) => Ok(Json(SaveAttempt { status: "failed".into(), detail: error })),
+    }
+}
+
+pub async fn console_report() -> Json<SaveAttempt> {
+    Json(SaveAttempt {
+        status: "failed".into(),
+        detail: "Walrus Console is not connected. No report was uploaded. Choosing a custody mode does not create an upload, and this application does not claim it cannot read a file it encrypts.".into(),
+    })
+}
 
 async fn wallet_address(state: &AppState, user_id: Uuid) -> Result<Option<String>, ApiError> {
     let address = sqlx::query_scalar::<_, Option<String>>("SELECT sui_address FROM users WHERE id = $1")
