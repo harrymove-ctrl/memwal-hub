@@ -36,4 +36,10 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    files: ["src/features/agent-builder/**/*.{ts,tsx}"],
+    rules: {
+      "react-refresh/only-export-components": "off",
+    },
+  },
 );

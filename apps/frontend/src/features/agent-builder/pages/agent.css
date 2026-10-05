@@ -1,0 +1,9 @@
+.agent-body { flex: 1; min-height: 0; display: flex; }
+.unsaved { margin-left: 8px; color: var(--text-3); font-size: var(--fs-sm); }
+.mobile-switch { margin: 8px; flex: none; }
+.mobile-switch button { height: 44px; }
+@media (max-width: 767px) {
+  .agent-body { flex-direction: column; }
+  .page-head { padding: 0 4px; gap: 4px; }
+  .page-head .crumbs > span { display: none; }
+}

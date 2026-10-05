@@ -35,12 +35,33 @@ const RIGHT_X = 420;
 const RIGHT_Y = 40;
 const RIGHT_WIDTH = 420;
 
+const INITIAL_POSITIONS = {
+  "node-frontmatter": { x: LEFT_X, y: LEFT_NODES[0].y, width: NODE_WIDTH },
+  "node-domain": { x: LEFT_X, y: LEFT_NODES[1].y, width: NODE_WIDTH },
+  "node-usage": { x: LEFT_X, y: LEFT_NODES[2].y, width: NODE_WIDTH },
+  "node-skill": { x: RIGHT_X, y: RIGHT_Y, width: RIGHT_WIDTH },
+} as const;
+
+type NodeId = keyof typeof INITIAL_POSITIONS;
+
 export default function SkillGraphRoute() {
   const { slug } = useParams();
   const entry = useMemo(() => catalogService.findBySlug(slug ?? null), [slug]);
   const [copied, setCopied] = useState(false);
   const [readSections, setReadSections] = useState<Set<number>>(new Set());
+  const [positions, setPositions] = useState(INITIAL_POSITIONS);
+  const [positionSlug, setPositionSlug] = useState(slug);
+  if (positionSlug !== slug) {
+    setPositionSlug(slug);
+    setPositions(INITIAL_POSITIONS);
+  }
 
+  function moveNode(id: NodeId, x: number, y: number) {
+    setPositions((current) => ({
+      ...current,
+      [id]: { ...current[id], x, y },
+    }));
+  }
   if (!entry || entry.category !== "skills") {
     return (
       <section className="mx-auto w-full max-w-3xl px-6 py-16 text-center">
@@ -83,7 +104,7 @@ export default function SkillGraphRoute() {
     });
   };
 
-  const rightAnchorY = RIGHT_Y + 44;
+  const headerAnchor = 22;
 
   return (
     <section className="flex h-full min-h-0 flex-1 flex-col">
@@ -201,27 +222,22 @@ export default function SkillGraphRoute() {
           <SkillGraphCanvas
             connectors={
               <>
-                <GraphConnector
-                  fromX={LEFT_X + NODE_WIDTH}
-                  fromY={LEFT_NODES[0]!.y + 44}
-                  toX={RIGHT_X}
-                  toY={rightAnchorY}
-                  tone="sky"
-                />
-                <GraphConnector
-                  fromX={LEFT_X + NODE_WIDTH}
-                  fromY={LEFT_NODES[1]!.y + 44}
-                  toX={RIGHT_X}
-                  toY={rightAnchorY}
-                  tone="amber"
-                />
-                <GraphConnector
-                  fromX={LEFT_X + NODE_WIDTH}
-                  fromY={LEFT_NODES[2]!.y + 44}
-                  toX={RIGHT_X}
-                  toY={rightAnchorY}
-                  tone="primary"
-                />
+                {(
+                  [
+                    ["node-frontmatter", "sky"],
+                    ["node-domain", "amber"],
+                    ["node-usage", "primary"],
+                  ] as const
+                ).map(([id, tone]) => (
+                  <GraphConnector
+                    key={id}
+                    fromX={positions[id].x + positions[id].width}
+                    fromY={positions[id].y + headerAnchor}
+                    toX={positions["node-skill"].x}
+                    toY={positions["node-skill"].y + headerAnchor}
+                    tone={tone}
+                  />
+                ))}
               </>
             }
           >
@@ -229,8 +245,9 @@ export default function SkillGraphRoute() {
               id="node-frontmatter"
               label="Front matter"
               icon={Tag}
-              x={LEFT_X}
-              y={LEFT_NODES[0]!.y}
+              x={positions["node-frontmatter"].x}
+              y={positions["node-frontmatter"].y}
+              onMove={(x, y) => moveNode("node-frontmatter", x, y)}
             >
               <p className="font-mono text-xs text-foreground">
                 name: <span className="text-primary">{entry.name}</span>
@@ -245,8 +262,9 @@ export default function SkillGraphRoute() {
               label="Domain"
               icon={Blocks}
               badge={domain}
-              x={LEFT_X}
-              y={LEFT_NODES[1]!.y}
+              x={positions["node-domain"].x}
+              y={positions["node-domain"].y}
+              onMove={(x, y) => moveNode("node-domain", x, y)}
             >
               <p className="text-xs/relaxed text-muted-foreground">
                 Derived from the skill's own front-matter name — no separate tag
@@ -262,8 +280,9 @@ export default function SkillGraphRoute() {
               id="node-usage"
               label="Usage"
               icon={FileCode}
-              x={LEFT_X}
-              y={LEFT_NODES[2]!.y}
+              x={positions["node-usage"].x}
+              y={positions["node-usage"].y}
+              onMove={(x, y) => moveNode("node-usage", x, y)}
             >
               <p className="font-mono text-[11px] text-muted-foreground">
                 destination
@@ -284,9 +303,10 @@ export default function SkillGraphRoute() {
               label="Skill"
               icon={Blocks}
               badge="Real"
-              x={RIGHT_X}
-              y={RIGHT_Y}
-              width={RIGHT_WIDTH}
+              x={positions["node-skill"].x}
+              y={positions["node-skill"].y}
+              width={positions["node-skill"].width}
+              onMove={(x, y) => moveNode("node-skill", x, y)}
             >
               <h3 className="text-sm font-semibold text-foreground">
                 {entry.name}

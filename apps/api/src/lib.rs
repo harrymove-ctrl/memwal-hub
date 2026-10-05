@@ -6,6 +6,7 @@ mod connections;
 mod error;
 mod gateway;
 mod health;
+mod memory;
 mod openapi;
 mod organizations;
 mod playground;
@@ -130,6 +131,8 @@ fn browser_origins(config: &AppConfig) -> Vec<axum::http::HeaderValue> {
             "http://127.0.0.1:3000".parse().expect("valid local origin"),
             "http://localhost:4173".parse().expect("valid local origin"),
             "http://127.0.0.1:4173".parse().expect("valid local origin"),
+            "http://localhost:5188".parse().expect("valid local origin"),
+            "http://127.0.0.1:5188".parse().expect("valid local origin"),
         ] {
             if !browser_origins.contains(&origin) {
                 browser_origins.push(origin);
@@ -179,6 +182,9 @@ pub fn app(state: AppState) -> Router {
         .route("/auth/login", post(login))
         .route("/auth/session", get(session))
         .route("/auth/logout", post(logout))
+        .route("/memory/session", get(memory::session))
+        .route("/memory/walrus", post(memory::save).delete(memory::clear))
+        .route("/memory/recall", post(memory::recall))
         .route("/auth/refresh", post(refresh))
         .route("/auth/wallet/nonce", post(wallet_nonce))
         .route("/auth/wallet/login", post(wallet_login))

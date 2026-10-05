@@ -8,6 +8,9 @@ import {
 } from "react";
 import { Minus, Plus } from "lucide-react";
 
+import { GraphCanvasScaleContext } from "./graph-canvas-scale";
+
+
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 1.75;
 
@@ -103,21 +106,23 @@ export default function SkillGraphCanvas({
         backgroundPosition: `${transform.x}px ${transform.y}px`,
       }}
     >
-      <div
-        className="absolute top-0 left-0"
-        style={{
-          transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
-          transformOrigin: "0 0",
-        }}
-      >
-        <svg
-          className="pointer-events-none absolute top-0 left-0 overflow-visible"
-          aria-hidden="true"
+      <GraphCanvasScaleContext.Provider value={transform.scale}>
+        <div
+          className="absolute top-0 left-0"
+          style={{
+            transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
+            transformOrigin: "0 0",
+          }}
         >
-          {connectors}
-        </svg>
-        {children}
-      </div>
+          <svg
+            className="pointer-events-none absolute top-0 left-0 overflow-visible"
+            aria-hidden="true"
+          >
+            {connectors}
+          </svg>
+          {children}
+        </div>
+      </GraphCanvasScaleContext.Provider>
 
       <div className="absolute right-4 bottom-4 flex items-center gap-1 rounded-lg border border-border bg-card p-1 shadow-md">
         <button

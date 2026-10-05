@@ -7,6 +7,7 @@ import {
   House,
   Layers,
   LayoutDashboard,
+  Spline,
   Users,
   Wrench,
 } from "lucide-react";
@@ -52,6 +53,11 @@ export const navigationItems: NavigationItem[] = [
     href: "/skills",
     icon: Blocks,
     label: "Skills",
+  },
+  {
+    href: "/builder",
+    icon: Spline,
+    label: "Builder",
   },
   {
     href: "/playground",
