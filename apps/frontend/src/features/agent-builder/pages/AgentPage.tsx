@@ -28,7 +28,7 @@ export function AgentPage({ ctx, service }: { ctx: ShellCtx; service: RunService
   const nav = useNavigate();
 
   const [active] = useState(service);
-  const { run, start, stop, busy } = useRun(active, agentId, active.mode === "demo");
+  const { run, start, stop, busy } = useRun(active, agentId, false);
   const [editing, setEditing] = useState<SectionId | null>(null);
   const [save, setSave] = useState<SaveState>("idle");
   const [editingAgent, setEditingAgent] = useState(agentId);
@@ -46,15 +46,11 @@ export function AgentPage({ ctx, service }: { ctx: ShellCtx; service: RunService
     if (config.schedule) v.add("schedule");
     if (config.files?.length) v.add("files");
     if (config.identity || config.channels.length) v.add("channels");
-    const revealed = new Set(run.events.flatMap((event) => (event.t === "reveal" ? [event.section] : [])));
-    const waiting = active.mode === "demo" && (run.status === "idle" || run.status === "starting" || run.status === "running");
-    if (config.tools.length && (!waiting || revealed.has("tools"))) v.add("tools");
-    if (agentId === "product-discovery" && (!waiting || revealed.has("review"))) v.add("review");
-    if (agentId === "product-discovery" && (!waiting || revealed.has("save"))) v.add("save");
-    if (!waiting || revealed.has("subAgents")) v.add("subAgents");
+    if (config.tools.length) v.add("tools");
+    if (config.subAgents.length) v.add("subAgents");
     if (config.skills.length) v.add("skills");
     return v;
-  }, [active.mode, config, run.events, run.status]);
+  }, [config]);
 
   const viewport = state.viewports[agentId] ?? DEFAULT_VIEWPORT;
   const onViewport = useCallback((v: typeof viewport) => dispatch({ type: "setViewport", agentId, viewport: v }), [dispatch, agentId]);

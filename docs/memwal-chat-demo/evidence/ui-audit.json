@@ -1,0 +1,231 @@
+{
+  "when": "2026-10-08T12:11:02.659Z",
+  "results": [
+    {
+      "name": "No truncated buttons: integrations 1440",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "No overlapping controls: integrations 1440",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "No horizontal overflow: integrations 1440",
+      "pass": true,
+      "detail": "0px"
+    },
+    {
+      "name": "No truncated buttons: agent canvas 1440",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "No overlapping controls: agent canvas 1440",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "No horizontal overflow: agent canvas 1440",
+      "pass": true,
+      "detail": "0px"
+    },
+    {
+      "name": "No truncated buttons: chat 1440",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "No overlapping controls: chat 1440",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "No horizontal overflow: chat 1440",
+      "pass": true,
+      "detail": "0px"
+    },
+    {
+      "name": "No truncated buttons: integrations 1024",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "No overlapping controls: integrations 1024",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "No horizontal overflow: integrations 1024",
+      "pass": true,
+      "detail": "0px"
+    },
+    {
+      "name": "No truncated buttons: agent canvas 1024",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "No overlapping controls: agent canvas 1024",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "No horizontal overflow: agent canvas 1024",
+      "pass": true,
+      "detail": "0px"
+    },
+    {
+      "name": "No truncated buttons: chat 1024",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "No overlapping controls: chat 1024",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "No horizontal overflow: chat 1024",
+      "pass": true,
+      "detail": "0px"
+    },
+    {
+      "name": "No truncated buttons: integrations 390",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "No overlapping controls: integrations 390",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "No horizontal overflow: integrations 390",
+      "pass": true,
+      "detail": "0px"
+    },
+    {
+      "name": "No truncated buttons: agent canvas 390",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "No overlapping controls: agent canvas 390",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "No horizontal overflow: agent canvas 390",
+      "pass": true,
+      "detail": "0px"
+    },
+    {
+      "name": "No truncated buttons: chat 390",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "No overlapping controls: chat 390",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "No horizontal overflow: chat 390",
+      "pass": true,
+      "detail": "0px"
+    },
+    {
+      "name": "ZRouter / OpenAI-compatible proxy badge is not a control and stays \"Ready\"",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Walrus Memory badge is not a control and stays \"Ready\"",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Walrus Console badge is not a control and stays \"Unavailable\"",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Memory is still connected after clicking badges",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Claude is not marked Connected without provider confirmation",
+      "pass": true,
+      "detail": "status \"Waiting\", popup https://claude.ai/oauth/authorize?code=true&client_id=9d1c25, callback field 1, message "
+    },
+    {
+      "name": "Settings has exactly one Walrus Console section",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Wallet sign-in is labelled as workspace sign-in, not Console",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "No runtime errors in the console",
+      "pass": true,
+      "detail": ""
+    }
+  ],
+  "layout": {
+    "integrations 1440": {
+      "truncated": [],
+      "overlaps": [],
+      "horizontalOverflow": 0
+    },
+    "agent canvas 1440": {
+      "url": "/builder/agents/product-discovery",
+      "truncated": [],
+      "overlaps": [],
+      "horizontalOverflow": 0
+    },
+    "chat 1440": {
+      "truncated": [],
+      "overlaps": [],
+      "horizontalOverflow": 0
+    },
+    "integrations 1024": {
+      "truncated": [],
+      "overlaps": [],
+      "horizontalOverflow": 0
+    },
+    "agent canvas 1024": {
+      "url": "/builder/agents/product-discovery",
+      "truncated": [],
+      "overlaps": [],
+      "horizontalOverflow": 0
+    },
+    "chat 1024": {
+      "truncated": [],
+      "overlaps": [],
+      "horizontalOverflow": 0
+    },
+    "integrations 390": {
+      "truncated": [],
+      "overlaps": [],
+      "horizontalOverflow": 0
+    },
+    "agent canvas 390": {
+      "url": "/builder/agents/product-discovery",
+      "truncated": [],
+      "overlaps": [],
+      "horizontalOverflow": 0
+    },
+    "chat 390": {
+      "truncated": [],
+      "overlaps": [],
+      "horizontalOverflow": 0
+    }
+  },
+  "errors": []
+}

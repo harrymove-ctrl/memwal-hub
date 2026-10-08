@@ -26,15 +26,18 @@ export default function WorkspaceShellSession({
 
   useEffect(() => {
     let active = true;
-
+    const timer = window.setTimeout(() => {
+      if (!active) return;
+      setStatus((current) => (current === "loading" ? "guest" : current));
+    }, 4000);
     void authService.session().then((sessionUser) => {
       if (!active) return;
       setUser(sessionUser);
       setStatus(sessionUser ? "authenticated" : "guest");
-    });
-
+    }).finally(() => window.clearTimeout(timer));
     return () => {
       active = false;
+      window.clearTimeout(timer);
     };
   }, []);
 

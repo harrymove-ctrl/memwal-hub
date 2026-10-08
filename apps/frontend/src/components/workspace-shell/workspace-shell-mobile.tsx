@@ -74,7 +74,7 @@ export default function WorkspaceShellMobile() {
           <Center className="size-5 rounded bg-primary font-mono text-[10px] text-primary-foreground">
             W
           </Center>
-          Bew-Harness
+          MemWal
         </Link>
       </Flex>
 

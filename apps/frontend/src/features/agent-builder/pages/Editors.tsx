@@ -13,7 +13,7 @@ interface Props {
 
 const TITLES: Record<SectionId, string> = {
   schedule: "Schedule", triggers: "Start", channels: "Channels", memory: "Memory", files: "Research files", agent: "Agent",
-  instructions: "Instructions", tools: "Read context", review: "Review findings", save: "Save results", subAgents: "Sub-agents", skills: "Skills",
+  instructions: "Instructions", tools: "Tools", review: "Review findings", save: "Save results", subAgents: "Sub-agents", skills: "Skills",
 };
 
 const lines = (s: string) => s.split("\n").map((x) => x.trim()).filter(Boolean);

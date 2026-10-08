@@ -27,9 +27,9 @@
   --shadow-pop: 0 8px 24px rgba(16, 24, 40, 0.12), 0 1px 2px rgba(16, 24, 40, 0.06);
   --dot: rgb(214, 218, 224);
   --r-sm: 6px; --r: 8px; --r-card: 12px; --r-section: 16px;
-  --sidebar-w: 229px;
+  --sidebar-w: clamp(200px, 18vw, 260px);
   --header-h: 48px;
-  --run-w: 395px;
+  --run-w: clamp(300px, 34vw, 420px);
   --ease: cubic-bezier(0.2, 0, 0, 1);
   --dur-fast: 120ms; --dur: 200ms; --dur-slow: 260ms;
   height: 100%;

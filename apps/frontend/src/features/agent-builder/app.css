@@ -2,15 +2,16 @@
 .content { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; outline: none; }
 
 /* Page header: 48px, measured. */
-.page-head { height: var(--header-h); flex: none; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--line); }
-.page-head .crumbs { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; }
-.page-head .crumbs a, .page-head .crumbs span { color: var(--text-2); text-decoration: none; white-space: nowrap; }
-.page-head .crumbs a:hover { color: var(--text); }
-.page-head h1 { margin: 0; font-size: var(--fs); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.page-head .actions { display: flex; gap: 8px; align-items: center; }
+ .page-head { height: auto; min-height: var(--header-h); flex: none; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--line); min-width: 0; }
+ .page-head .crumbs { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; overflow: hidden; }
+ .page-head .crumbs a, .page-head .crumbs span { color: var(--text-2); text-decoration: none; white-space: nowrap; }
+ .page-head .crumbs a:hover { color: var(--text); }
+ .page-head h1 { margin: 0; font-size: var(--fs); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+ .page-head .actions { display: flex; gap: 8px; align-items: center; flex: none; flex-wrap: wrap; justify-content: flex-end; }
 .page-body { flex: 1; min-height: 0; overflow: auto; }
 
-@media (max-width: 767px) {
-  .icon-btn { width: 44px; height: 44px; }
-  .btn { height: 44px; }
-}
+ @media (max-width: 767px) {
+   .page-head { padding: 8px; }
+   .page-head .icon-btn { width: 44px; height: 44px; }
+   .composer .send, .run-stop { width: 44px; height: 44px; }
+ }

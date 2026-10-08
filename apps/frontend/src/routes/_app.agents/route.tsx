@@ -220,22 +220,23 @@ export default function AgentsRoute() {
           <div>
             <Flex className="items-center gap-2 text-[10px] font-semibold tracking-widest text-muted-foreground uppercase">
               <Bot aria-hidden="true" className="size-3.5" />
-              Shared agent accounts
+              Connect a model
             </Flex>
 
             <h1
               id="agents-title"
               className="mt-3 font-heading text-3xl font-bold tracking-tight"
             >
-              Agents
+              Models
             </h1>
 
             <p className="mt-2 max-w-lg text-sm/relaxed text-muted-foreground">
-              Find your provider. Select an account to explore usage and access.
+              ZRoute gives MemWal access to the models on your key. This is a model connection, not an assistant. Provider account sharing stays available below.
             </p>
           </div>
 
           <Flex className="flex-wrap items-center gap-2">
+            <a className="inline-flex h-10 items-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground" href="/builder/integrations">Connect model</a>
             <AgentsConnectDialog
               onConnected={() =>
                 void queryClient.invalidateQueries({

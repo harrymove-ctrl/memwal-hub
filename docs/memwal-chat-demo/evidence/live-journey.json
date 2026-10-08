@@ -1,0 +1,271 @@
+{
+  "when": "2026-10-08T08:44:57.183Z",
+  "mode": "LIVE (ZRouter + Walrus Memory Mainnet)",
+  "steps": [
+    {
+      "step": "Conversation A",
+      "prompt": "We are building a product for solo developers. Our next release focuses on onboarding, and we have two engineers.",
+      "reply": "For solo developers, onboarding must deliver an immediate \"aha!\" moment with minimal friction. Solo developers typically prefer diving straight into code rather",
+      "memory": {
+        "summary": "Memory checked \u00b7 no relevant facts",
+        "facts": []
+      },
+      "details": {
+        "Model reported": "gemini-3.8-flash",
+        "Model requested": "gemini-3.8-flash",
+        "Request shape": "system \u2192 user",
+        "Memory facts in request": "0",
+        "Conversation messages sent": "1",
+        "Finish reason": "length",
+        "Tokens": "111 in \u00b7 26 out"
+      },
+      "suggestions": [
+        {
+          "text": "The product targets solo developers."
+        },
+        {
+          "text": "The next release focuses on onboarding."
+        },
+        {
+          "text": "The team has two engineers."
+        }
+      ],
+      "saved": [
+        {
+          "text": "The product targets solo developers.",
+          "state": "saved",
+          "detail": "audience \u00b7 stored on Walrus as blob -zUHQ8skcmEBe2Jj7udrG00-nynKmeYFuTCCO343EpM"
+        },
+        {
+          "text": "The next release focuses on onboarding.",
+          "state": "saved",
+          "detail": "priority \u00b7 stored on Walrus as blob uEPnqP6L8dRyYmMLenzXWKIrFJM4ULVKzm9gvgvmZcM"
+        },
+        {
+          "text": "The team has two engineers.",
+          "state": "saved",
+          "detail": "capacity \u00b7 stored on Walrus as blob Lp70bwBtkda3dotU5_3cIJ-zcm5CNQIVvT2LZobq9RU"
+        }
+      ]
+    },
+    {
+      "step": "New chat B (recall from Conversation A)",
+      "prompt": "Should we prioritize shared team workspaces next?",
+      "reply": "No, you should not prioritize shared team workspaces right now. \n\nHere is why:\n\n1. **Audience mismatch:** Shared team",
+      "memory": {
+        "summary": "Memory used \u00b7 3 facts",
+        "facts": [
+          {
+            "text": "The team has two engineers.",
+            "source": "Walrus blob Lp70bwBtkda3dotU5_3cIJ-zcm5CNQIVvT2LZobq9RU \u00b7 saved 10/8/2026, 4:45:42 PM \u00b7 distance 0.723"
+          },
+          {
+            "text": "The next release focuses on onboarding.",
+            "source": "Walrus blob uEPnqP6L8dRyYmMLenzXWKIrFJM4ULVKzm9gvgvmZcM \u00b7 saved 10/8/2026, 4:45:41 PM \u00b7 distance 0.650"
+          },
+          {
+            "text": "The product targets solo developers.",
+            "source": "Walrus blob -zUHQ8skcmEBe2Jj7udrG00-nynKmeYFuTCCO343EpM \u00b7 saved 10/8/2026, 4:45:41 PM \u00b7 distance 0.698"
+          }
+        ]
+      },
+      "details": {
+        "Model reported": "gemini-3.8-flash",
+        "Model requested": "gemini-3.8-flash",
+        "Request shape": "system \u2192 system \u2192 user",
+        "Memory facts in request": "3",
+        "Conversation messages sent": "1",
+        "Finish reason": "length",
+        "Tokens": "303 in \u00b7 28 out"
+      },
+      "suggestions": []
+    },
+    {
+      "step": "After reload, new conversation",
+      "prompt": "What do you already know about our product, team and release focus?",
+      "reply": "Based on your Walrus Memory, here is what I know:\n\n* **Product Target:** The product targets solo developers (shaped by Fact 3).\n* **Team:** The team consists of two engineers (shaped by Fact 1).\n* **Release Focus:** The next release is focused on onboarding (shaped by Fact 2).\n\nWith a two-engineer team building for solo developers, keeping the onboarding flow streamlined and self-serve will be critical. What specific onboarding friction points are you looking to address first?",
+      "memory": {
+        "summary": "Memory used \u00b7 3 facts",
+        "facts": [
+          {
+            "text": "The team has two engineers.",
+            "source": "Walrus blob Lp70bwBtkda3dotU5_3cIJ-zcm5CNQIVvT2LZobq9RU \u00b7 saved 10/8/2026, 4:45:42 PM \u00b7 distance 0.723"
+          },
+          {
+            "text": "The next release focuses on onboarding.",
+            "source": "Walrus blob uEPnqP6L8dRyYmMLenzXWKIrFJM4ULVKzm9gvgvmZcM \u00b7 saved 10/8/2026, 4:45:41 PM \u00b7 distance 0.586"
+          },
+          {
+            "text": "The product targets solo developers.",
+            "source": "Walrus blob -zUHQ8skcmEBe2Jj7udrG00-nynKmeYFuTCCO343EpM \u00b7 saved 10/8/2026, 4:45:41 PM \u00b7 distance 0.673"
+          }
+        ]
+      },
+      "details": {
+        "Model reported": "gemini-3.8-flash",
+        "Model requested": "gemini-3.8-flash",
+        "Request shape": "system \u2192 system \u2192 user",
+        "Memory facts in request": "3",
+        "Conversation messages sent": "1",
+        "Finish reason": "stop",
+        "Tokens": "309 in \u00b7 106 out"
+      },
+      "suggestions": []
+    },
+    {
+      "step": "Revised context",
+      "prompt": "We now have four engineers, and team collaboration is becoming a priority.",
+      "reply": "Noted the change: your engineering team has grown from two (Fact 1) to four, and your product scope is expanding beyond solo developers (",
+      "memory": {
+        "summary": "Memory used \u00b7 3 facts",
+        "facts": [
+          {
+            "text": "The team has two engineers.",
+            "source": "Walrus blob Lp70bwBtkda3dotU5_3cIJ-zcm5CNQIVvT2LZobq9RU \u00b7 saved 10/8/2026, 4:45:42 PM \u00b7 distance 0.357"
+          },
+          {
+            "text": "The next release focuses on onboarding.",
+            "source": "Walrus blob uEPnqP6L8dRyYmMLenzXWKIrFJM4ULVKzm9gvgvmZcM \u00b7 saved 10/8/2026, 4:45:41 PM \u00b7 distance 0.705"
+          },
+          {
+            "text": "The product targets solo developers.",
+            "source": "Walrus blob -zUHQ8skcmEBe2Jj7udrG00-nynKmeYFuTCCO343EpM \u00b7 saved 10/8/2026, 4:45:41 PM \u00b7 distance 0.739"
+          }
+        ]
+      },
+      "details": {
+        "Model reported": "gemini-3.8-flash",
+        "Model requested": "gemini-3.8-flash",
+        "Request shape": "system \u2192 system \u2192 user \u2192 assistant \u2192 user",
+        "Memory facts in request": "3",
+        "Conversation messages sent": "3",
+        "Finish reason": "length",
+        "Tokens": "431 in \u00b7 30 out"
+      },
+      "suggestions": [
+        {
+          "text": "The engineering team has four engineers."
+        },
+        {
+          "text": "Team collaboration is becoming a priority."
+        }
+      ],
+      "saved": [
+        {
+          "text": "The engineering team has four engineers.",
+          "state": "saved",
+          "detail": "capacity \u00b7 stored on Walrus as blob NUuqPr47FDgInoEvpfQdxCGJmxU8yMWLX3Cvi7PLG6s"
+        },
+        {
+          "text": "Team collaboration is becoming a priority.",
+          "state": "saved",
+          "detail": "priority \u00b7 stored on Walrus as blob eAUBtQP7BKZLXCq8jU5pqtNE5XqcZrXXYjeJPnKoUuM"
+        }
+      ]
+    },
+    {
+      "step": "New chat after revision",
+      "prompt": "How many engineers do we have, and should we prioritize shared team workspaces now?",
+      "reply": "You currently have **four engineers**. While an earlier record showed two engineers, the most recent update confirms the team has grown to four (Facts 1 and ",
+      "memory": {
+        "summary": "Memory used \u00b7 5 facts",
+        "facts": [
+          {
+            "text": "The engineering team has four engineers.",
+            "source": "Walrus blob NUuqPr47FDgInoEvpfQdxCGJmxU8yMWLX3Cvi7PLG6s \u00b7 saved 10/8/2026, 4:46:46 PM \u00b7 distance 0.435"
+          },
+          {
+            "text": "Team collaboration is becoming a priority.",
+            "source": "Walrus blob eAUBtQP7BKZLXCq8jU5pqtNE5XqcZrXXYjeJPnKoUuM \u00b7 saved 10/8/2026, 4:46:45 PM \u00b7 distance 0.512"
+          },
+          {
+            "text": "The team has two engineers.",
+            "source": "Walrus blob Lp70bwBtkda3dotU5_3cIJ-zcm5CNQIVvT2LZobq9RU \u00b7 saved 10/8/2026, 4:45:42 PM \u00b7 distance 0.431"
+          },
+          {
+            "text": "The next release focuses on onboarding.",
+            "source": "Walrus blob uEPnqP6L8dRyYmMLenzXWKIrFJM4ULVKzm9gvgvmZcM \u00b7 saved 10/8/2026, 4:45:41 PM \u00b7 distance 0.762"
+          },
+          {
+            "text": "The product targets solo developers.",
+            "source": "Walrus blob -zUHQ8skcmEBe2Jj7udrG00-nynKmeYFuTCCO343EpM \u00b7 saved 10/8/2026, 4:45:41 PM \u00b7 distance 0.735"
+          }
+        ]
+      },
+      "details": {
+        "Model reported": "gemini-3.8-flash",
+        "Model requested": "gemini-3.8-flash",
+        "Request shape": "system \u2192 system \u2192 user",
+        "Memory facts in request": "5",
+        "Conversation messages sent": "1",
+        "Finish reason": "length",
+        "Tokens": "393 in \u00b7 32 out"
+      },
+      "suggestions": []
+    }
+  ],
+  "browserStorageMentionsSoloDevelopers": false,
+  "chatRequestShapes": [
+    {
+      "use_memory": true,
+      "messages": [
+        {
+          "role": "user",
+          "characters": 113,
+          "sha256_prefix": "18091fe5d8a9"
+        }
+      ]
+    },
+    {
+      "use_memory": true,
+      "messages": [
+        {
+          "role": "user",
+          "characters": 49,
+          "sha256_prefix": "8d2d02f05074"
+        }
+      ]
+    },
+    {
+      "use_memory": true,
+      "messages": [
+        {
+          "role": "user",
+          "characters": 67,
+          "sha256_prefix": "b8f17ab097a3"
+        }
+      ]
+    },
+    {
+      "use_memory": true,
+      "messages": [
+        {
+          "role": "user",
+          "characters": 67,
+          "sha256_prefix": "b8f17ab097a3"
+        },
+        {
+          "role": "assistant",
+          "characters": 482,
+          "sha256_prefix": "8ba269027432"
+        },
+        {
+          "role": "user",
+          "characters": 74,
+          "sha256_prefix": "9b4fc74101e4"
+        }
+      ]
+    },
+    {
+      "use_memory": true,
+      "messages": [
+        {
+          "role": "user",
+          "characters": 83,
+          "sha256_prefix": "26360ffcb613"
+        }
+      ]
+    }
+  ],
+  "memoryStatsNote": "Replaced by blob-count.json (a complete on-chain scan run after the journey)."
+}

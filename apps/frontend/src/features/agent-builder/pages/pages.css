@@ -1,7 +1,7 @@
 /* Chat */
 .chat { display: flex; justify-content: center; }
 .chat-col { width: min(760px, 100% - 32px); padding-top: 22vh; }
-.mascot { width: 80px; height: 80px; border-radius: 20px; background: linear-gradient(160deg, rgb(160, 200, 255), rgb(80, 140, 240)); margin-bottom: 18px; }
+
 .chat-title { margin: 0 0 24px; font-size: 20px; line-height: 28px; font-weight: 500; }
 .chat-box .composer textarea { min-height: 40px; }
 .model { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border: 0; background: transparent; border-radius: 6px; cursor: pointer; }
@@ -36,7 +36,7 @@
 .int-text { flex: 1; min-width: 0; display: grid; }
 .int-text strong { font-weight: 400; }
 .int-text span { color: var(--text-2); font-size: var(--fs-sm); line-height: 18px; }
-.btn.connected { background: var(--hover); border-color: var(--hover); box-shadow: none; }
+.int-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 .empty { padding: 24px 48px; color: var(--text-3); }
 
 /* Skills */

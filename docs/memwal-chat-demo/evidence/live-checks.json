@@ -1,0 +1,160 @@
+{
+  "when": "2026-10-08T12:05:09.540Z",
+  "mode": "LIVE checks, no Memory writes",
+  "steps": [
+    {
+      "step": "Model outage (unknown model ID)",
+      "http": 200,
+      "error": {
+        "code": "proxy_unavailable",
+        "message": "The proxy is unavailable. Proxy said: no eligible provider account"
+      }
+    },
+    {
+      "step": "Irrelevant question",
+      "prompt": "What is a good recipe for banana bread?",
+      "status": "done",
+      "reply": "While I specialize in product discovery to help you decide what to build next in the MemWal builder, here is a quick, classic banana bread recipe:\n\nIngredients:\n\n3 ripe bananas, mashed\n1/3 cup melted butter\n1/2 cup sugar\n1 large egg, beaten\n1 tsp vanilla extract\n1 tsp baking soda\nPinch of salt\n1 1/2 cups all-purpose flour\n\nInstructions:\n\nPreheat your oven to 350°F (175°C) and grease a standard 4x8-inch loaf pan.\nIn a bowl, mix the melted butter into the mashed bananas.\nStir in the baking soda and salt.\nMix in the sugar, beaten egg, and vanilla extract.\nGently fold in the flour until just combined (do not overmix).\nPour the batter into the pan and bake for 50–60 minutes, or until a tester inserted into the center comes out clean. Cool before slicing.\n\nWhenever you're ready to switch back to product strategy, let me know what product you are building, who your target users are, or what problem you're tackling next!",
+      "memorySummary": "Memory checked · no relevant facts (5 filtered out)",
+      "facts": [],
+      "details": {
+        "Model reported": "gemini-3.8-flash",
+        "Model requested": "gemini-3.8-flash",
+        "Request shape": "system → user",
+        "Memory facts in request": "0",
+        "Conversation messages sent": "1",
+        "Finish reason": "stop",
+        "Tokens": "98 in · 268 out"
+      },
+      "error": null
+    },
+    {
+      "step": "Model switch: grok-4.5",
+      "prompt": "How many engineers do we have, and what is the next release focused on?",
+      "status": "done",
+      "reply": "Four engineers; next release focuses on onboarding.\n\nYou now have four engineers (most recent fact). That updates the earlier note of two engineers—call out the change so planning stays current. The next release is focused on onboarding.\n\nThese answers are shaped by remembered facts 1 (four engineers), 3 (prior two-engineer count), and 4 (onboarding focus).\n\nGiven the team size growth and onboarding priority, a concrete next build could be lightweight shared onboarding checklists or invite flows that still work for solo users but ease collaboration as the team expands.",
+      "memorySummary": "Memory used · 5 facts",
+      "facts": [
+        "The engineering team has four engineers.",
+        "Team collaboration is becoming a priority.",
+        "The team has two engineers.",
+        "The next release focuses on onboarding.",
+        "The product targets solo developers."
+      ],
+      "details": {
+        "Model reported": "grok-4.5-build",
+        "Model requested": "grok-4.5",
+        "Request shape": "system → system → user",
+        "Memory facts in request": "5",
+        "Conversation messages sent": "1",
+        "Finish reason": "stop"
+      },
+      "error": null
+    },
+    {
+      "step": "Model switch: claude-sonnet-5-5",
+      "prompt": "How many engineers do we have, and what is the next release focused on?",
+      "status": "done",
+      "reply": "Engineers: You have four engineers. Memory also holds an earlier note saying two, but the four-engineer fact was saved more recently, so I'm treating that as an update after the team grew.\n\nNext release: It focuses on onboarding.\n\nRemembered facts that shaped this answer:\n\nThe next release focuses on onboarding.\nThe team has four engineers (previously two).\nThe product targets solo developers.\nTeam collaboration is becoming a priority.\n\nSomething to consider: Your product targets solo developers, but team collaboration is now becoming a priority. Nothing in memory says the onboarding release has changed, so I'd keep it as planned. Still, you could use the extra engineering capacity to decide whether onboarding should stay solo-focused or also cover a first collaboration step, such as inviting a teammate.\n\nA concrete next step would be to split the four engineers into two tracks: three on the solo onboarding flow, and one prototyping a lightweight \"invite a teammate\" path. Then test whether collaboration belongs in this release or the next.\n\nIs the collaboration priority meant to affect this release, or is it for later?",
+      "memorySummary": "Memory used · 5 facts",
+      "facts": [
+        "The engineering team has four engineers.",
+        "Team collaboration is becoming a priority.",
+        "The team has two engineers.",
+        "The next release focuses on onboarding.",
+        "The product targets solo developers."
+      ],
+      "details": {
+        "Model reported": "claude-sonnet-5-5-high",
+        "Model requested": "claude-sonnet-5-5",
+        "Request shape": "system → system → user",
+        "Memory facts in request": "5",
+        "Conversation messages sent": "1",
+        "Finish reason": "stop",
+        "Tokens": "455 in · 550 out"
+      },
+      "error": null
+    },
+    {
+      "step": "Cancellation",
+      "status": "stopped"
+    }
+  ],
+  "agentBlobsBefore": 5,
+  "modelOptions": [
+    "gemini-3.8-flash (default)"
+  ],
+  "agentBlobsAfter": 5,
+  "results": [
+    {
+      "name": "Second user registers",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Second user sees no ZRouter connection",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Second user sees no Walrus Memory connection",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Second user cannot chat with the first user's model",
+      "pass": true,
+      "detail": "409 {\"code\":\"model_not_configured\",\"message\":\"Configure the ZRouter / OpenAI-compati"
+    },
+    {
+      "name": "Requests from another origin are refused",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Unknown model is reported as an error",
+      "pass": true,
+      "detail": "proxy_unavailable: The proxy is unavailable. Proxy said: no eligible provider account"
+    },
+    {
+      "name": "Auto-save is off by default",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Model list comes from the proxy",
+      "pass": false,
+      "detail": "gemini-3.8-flash (default)"
+    },
+    {
+      "name": "Irrelevant question recalls no facts",
+      "pass": true,
+      "detail": "Memory checked · no relevant facts (5 filtered out)"
+    },
+    {
+      "name": "Model grok-4.5 answered with recalled Memory",
+      "pass": true,
+      "detail": "reported grok-4.5-build, finish stop"
+    },
+    {
+      "name": "Model claude-sonnet-5-5 answered with recalled Memory",
+      "pass": true,
+      "detail": "reported claude-sonnet-5-5-high, finish stop"
+    },
+    {
+      "name": "Stop (Esc) cancels the reply and keeps the partial text",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "No Walrus writes during these checks",
+      "pass": true,
+      "detail": "5 → 5"
+    },
+    {
+      "name": "Page contains no key-shaped strings",
+      "pass": true,
+      "detail": ""
+    }
+  ]
+}

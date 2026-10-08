@@ -6,7 +6,9 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink } from "react-router";
 import { CATEGORIES, INTEGRATIONS } from "../data/fixtures";
+import authService from "@/services/auth";
 import { useStore } from "../state/store";
+import { useMemorySession, useModelProxyStatus } from "../state/integration-queries";
 import { AppIcon } from "./AppIcon";
 import { SettingsDialog } from "./SettingsDialog";
 import "./sidebar.css";
@@ -15,9 +17,17 @@ export function Sidebar({ onNotice, mobileOpen, onCloseMobile, hidden }: { onNot
   const { state, dispatch } = useStore();
   const collapsed = state.sidebarCollapsed;
   const [settings, setSettings] = useState(false);
+  const memory = useMemorySession();
+  const proxy = useModelProxyStatus();
+  const memoryReady = memory.data?.walrus.status === "verified";
+  const proxyReady = proxy.data?.status === "ready";
   const asideRef = useRef<HTMLElement>(null);
 
-  // Drawer: focus moves in on open, Escape closes, focus returns to the opener.
+  useEffect(() => {
+    const open = () => setSettings(true);
+    window.addEventListener("bew:open-settings", open);
+    return () => window.removeEventListener("bew:open-settings", open);
+  }, []);
   useEffect(() => {
     if (!mobileOpen) return;
     const opener = document.activeElement as HTMLElement | null;
@@ -80,10 +90,11 @@ export function Sidebar({ onNotice, mobileOpen, onCloseMobile, hidden }: { onNot
           </div>
           <p>Bring memories and project files into your next session.</p>
           <div className="sb-apps">
-            <span title="Walrus Memory · Not connected"><AppIcon app="memory" size={18} /></span>
-            <span title="Walrus Console · Not connected"><AppIcon app="console" size={18} /></span>
+            <span title={proxyReady ? "ZRouter · Ready" : "ZRouter · Not ready"}><AppIcon app="zroute" size={18} /></span>
+            <span title={memoryReady ? "Walrus Memory · Ready" : "Walrus Memory · Not connected"}><AppIcon app="memory" size={18} /></span>
+            <span title="Walrus Console · Unavailable"><AppIcon app="console" size={18} /></span>
           </div>
-          <p className="hint">Not connected. A model provider does not connect these.</p>
+          <p className="hint">{memory.error ? "Memory status could not be loaded." : `ZRouter ${proxyReady ? "ready" : "not ready"} · Memory ${memoryReady ? "ready" : "not connected"} · Console unavailable`}</p>
         </section>
       </aside>
       <SettingsDialog open={settings} onClose={() => setSettings(false)} />
@@ -109,7 +120,7 @@ function WorkspaceMenu({ onNotice, onOpenSettings }: { onNotice: (m: string) => 
                 <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)}>{t === "agents" ? "Agents" : "Workbench"}</button>
               ))}
             </div>
-            <a className="menu-item" href="/">Bew Harness home</a>
+            <a className="menu-item" href="/">MemWal home</a>
             <a className="menu-item" href="/skills">Skills catalogue</a>
             <a className="menu-item" href="/agents">Agent pools</a>
             <a className="menu-item" href="/organization">Organization</a>
@@ -130,7 +141,7 @@ function WorkspaceMenu({ onNotice, onOpenSettings }: { onNotice: (m: string) => 
             <button className="menu-item" onClick={() => onNotice("What's new: demo only.")}><Megaphone size={14} /> What's new</button>
             <button className="menu-item" onClick={onOpenSettings}><Settings2 size={14} /> Settings</button>
             <div className="menu-sep" />
-            <button className="menu-item" onClick={() => onNotice("Log out is disabled in the demo. Use Settings to sign out of the console.")}><LogOut size={14} /> Log out</button>
+            <button className="menu-item" onClick={() => { void authService.logout().finally(() => window.location.assign("/")); }}><LogOut size={14} /> Log out</button>
           </Popover.Content>
         </Popover.Portal>
       </Popover.Root>

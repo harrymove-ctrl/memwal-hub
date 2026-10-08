@@ -58,7 +58,7 @@ function WorkspaceBrand({ onNavigate }: WorkspaceBrandProps) {
             />
           </Center>
 
-          <p className="text-xs">Bew-Harness</p>
+          <p className="text-xs">MemWal</p>
         </Center>
 
         <div className="rounded border border-border/80 bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground">

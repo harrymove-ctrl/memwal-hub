@@ -46,73 +46,60 @@ export default function HomeRoute() {
       <header className="space-y-4 border-b border-border pb-10">
         <p className="flex items-center gap-2 font-mono text-xs font-medium tracking-wider text-primary uppercase">
           <Boxes aria-hidden="true" className="size-4" />
-          White paper
+          MemWal
         </p>
 
         <h1
           id="whitepaper-title"
           className="font-bold tracking-tight text-balance text-3xl/tight sm:text-4xl"
         >
-          Bew-Harness: the boundary an agent must not cross, written down
+          Your next chat should remember your project.
         </h1>
 
         <p className="max-w-3xl text-muted-foreground text-base/relaxed">
-          An agent given a whole codebase and a shell has no boundary it must
-          not cross, and nothing that fires when it tries. Bew-Harness writes
-          that boundary down in four kinds of document —{" "}
-          <strong className="font-semibold text-foreground">Harnesses</strong>,{" "}
-          <strong className="font-semibold text-foreground">Skills</strong>,{" "}
-          <strong className="font-semibold text-foreground">Hooks</strong> and{" "}
-          <strong className="font-semibold text-foreground">Templates</strong> —
-          and every one of them is a Markdown file in this repository. That is
-          the point: a boundary you can read, review in a diff, and disagree
-          with.
+          Explore ideas, make decisions, and continue where you left off—with relevant project context saved through Walrus Memory.
         </p>
+
+        <Flex className="flex-wrap items-center gap-3 pt-1">
+          <Link
+            to="/builder/integrations"
+            className="flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-medium tracking-tight text-primary-foreground shadow-xs transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden"
+          >
+            Get started
+          </Link>
+          <Link
+            to="/builder/chat"
+            className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-medium tracking-tight text-muted-foreground transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden"
+          >
+            See how it works
+          </Link>
+        </Flex>
       </header>
 
       <WhitepaperSection
-        index="01. Why Bew Harness"
-        title="Share access without passing around provider credentials"
+        index="01. How MemWal works"
+        title="Connect a model, keep project context, start a new chat"
       >
         <div className="space-y-4 text-muted-foreground text-sm/relaxed">
+          <p>1. Connect your model through ZRoute. A model connection is credentials and an endpoint, not an assistant.</p>
+          <p>2. Save useful project context in Walrus Memory. That memory is shared across the project’s conversations. Each chat still has its own transcript.</p>
+          <p>3. Start a new conversation without repeating the same background. The example below is illustrative, not a live model reply or a Mainnet receipt.</p>
           <p>
-            Sharing an account directly means handing out credentials and
-            managing access across teammates' devices. Bew Harness keeps the
-            provider connection on the server. Owners manage who can join a
-            pool, and approved teammates use their own Bew gateway keys.
+            Example: a founder saves that LaunchLens is for solo SaaS founders, the team has two engineers, and the release window is six weeks. A later chat asks what to prioritize. The saved constraints are the context, not the previous transcript.
           </p>
-
-          <p>
-            Requests pass through a shared gateway instead of requiring every
-            teammate to sign in to the provider account from their own machine.
-            This centralizes upstream access and makes membership and key
-            revocation easier to manage. Provider usage limits and account
-            policies still apply; a shared gateway does not guarantee protection
-            from an account ban.
-          </p>
-
-          <p>
-            Agents brings connected accounts, usage and pool membership
-            together. Tools contains setup instructions and integrations,
-            including Gateway, OpenCode and OMP. Playground lets you try models
-            using your connected accounts and approved pools.
-          </p>
-
           <Flex className="flex-wrap items-center gap-3 pt-1">
             <Link
-              to="/agents"
+              to="/builder/integrations"
               className="flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-medium tracking-tight text-primary-foreground shadow-xs transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden"
             >
-              <Users aria-hidden="true" className="size-3.5" />
-              Explore agents
+              Connect model
             </Link>
-
             <Link
-              to="/tools"
+              to="/agents"
               className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-medium tracking-tight text-muted-foreground transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden"
             >
-              <Wrench aria-hidden="true" className="size-3.5" />
-              Browse tools
+              <Users aria-hidden="true" className="size-3.5" />
+              Provider accounts
             </Link>
           </Flex>
         </div>

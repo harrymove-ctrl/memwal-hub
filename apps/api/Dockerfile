@@ -6,13 +6,16 @@ COPY apps/api/migrations ./migrations
 COPY apps/api/src ./src
 RUN cargo build --locked --release --bin hub-william-backend
 
-FROM debian:bookworm-slim
+FROM node:22-bookworm-slim
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/hub-william-backend /usr/local/bin/hub-william-backend
+COPY apps/api/scripts/memwal /app/scripts/memwal
+WORKDIR /app/scripts/memwal
+RUN npm install --omit=dev
 
 ENV PORT=8080
 EXPOSE 8080

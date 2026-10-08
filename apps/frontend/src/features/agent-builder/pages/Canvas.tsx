@@ -38,13 +38,14 @@ export function Canvas({ config, visible, viewport, onViewport, runPanelHidden, 
   const world = useRef<HTMLDivElement>(null);
   const nodes = useRef(new Map<SectionId, HTMLElement>());
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [stack, setStack] = useState<Partial<Record<SectionId, number>>>({});
   const [edges, setEdges] = useState<{ id: string; d: string; color: string; a: [number, number] }[]>([]);
   const [animating, setAnimating] = useState(false);
   const vp = useRef(viewport);
   useLayoutEffect(() => { vp.current = viewport; }, [viewport]);
 
-  const isOpen = (s: SectionId) => expanded[s] !== false;
-  const toggle = (s: SectionId) => setExpanded((e) => ({ ...e, [s]: !(e[s] !== false) }));
+  const isOpen = (s: SectionId) => expanded[s] ?? s !== "instructions";
+  const toggle = (s: SectionId) => setExpanded((e) => ({ ...e, [s]: !(e[s] ?? s !== "instructions") }));
 
   // Connectors use layout offsets inside the untransformed world, so they stay
   // attached at any zoom/pan and re-measure when sections resize.
@@ -80,9 +81,17 @@ export function Canvas({ config, visible, viewport, onViewport, runPanelHidden, 
     nodes.current.forEach((el) => ro.observe(el));
     return () => ro.disconnect();
   }, [measure, config, expanded]);
-
-
-
+  useLayoutEffect(() => {
+    let y = 48;
+    const next: Partial<Record<SectionId, number>> = {};
+    for (const id of ["triggers", "memory", "files"] as const) {
+      const el = nodes.current.get(id);
+      if (!el) continue;
+      next[id] = y;
+      y += el.offsetHeight + 20;
+    }
+    setStack((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+  }, [config, expanded, visible]);
   // Pan like the reference: drag the canvas or a card. A click without movement still toggles.
   const drag = useRef<{ px: number; py: number; x: number; y: number; moved: boolean } | null>(null);
   const onPointerDown = (e: React.PointerEvent) => {
@@ -132,6 +141,14 @@ export function Canvas({ config, visible, viewport, onViewport, runPanelHidden, 
     setAnimating(true);
     onViewport({ zoom, x: cx - wx * zoom, y: cy - wy * zoom });
   };
+  const fitWorkflow = () => {
+    const el = wrap.current;
+    const needed = 760;
+    const available = Math.max(180, (el?.clientWidth ?? needed) - 32);
+    const zoom = Math.min(1, Math.max(ZOOM_MIN, Math.round((available / needed) * 20) / 20));
+    setAnimating(true);
+    onViewport({ x: 12, y: 8, zoom });
+  };
   const pct = Math.round(viewport.zoom * 100);
 
   const register = (s: SectionId) => (el: HTMLElement | null) => { if (el) nodes.current.set(s, el); else nodes.current.delete(s); };
@@ -144,7 +161,7 @@ export function Canvas({ config, visible, viewport, onViewport, runPanelHidden, 
         className="cv-section"
         data-tone={opts.tone ?? "plain"}
         data-reveal
-        style={{ left: POS[s].x, top: POS[s].y }}
+        style={{ left: POS[s].x, top: stack[s] ?? POS[s].y }}
         aria-labelledby={`cv-${s}`}
       >
         <div className="cv-head">
@@ -211,20 +228,17 @@ export function Canvas({ config, visible, viewport, onViewport, runPanelHidden, 
             ) : <p className="cv-note">No channel is connected.</p>)}
           {section("memory", "Memory",
             config.memory.length ? (
-              <>
-                <p className="cv-kicker">Example memory scopes</p>
-                <ul className="cv-rows">{config.memory.map((m) => <li key={m.id}><BookOpen size={13} /><span><span className="cv-t">{m.name}</span>{m.detail ? <span className="cv-sub">{m.detail}</span> : null}</span></li>)}</ul>
-              </>
-            ) : <p className="cv-empty">No memory scope is connected.</p>,
-            { badge: <span className="badge amber">Example</span> })}
-          {section("files", config.filesTitle ?? "Research files",
+              <ul className="cv-rows">{config.memory.map((m) => (
+                <li key={m.id} title={m.detail}><BookOpen size={13} /><span className="cv-copy"><span className="cv-t">{m.name}</span>{m.detail ? <span className="cv-sub">{m.detail}</span> : null}</span></li>
+              ))}</ul>
+            ) : <p className="cv-empty">No memory scope connected.</p>)}
+          {section("files", "Research files",
             config.files?.length ? (
               <>
-                <p className="cv-kicker">MemWal / Product Discovery · Example files</p>
-                <ul className="cv-rows">{config.files.map((file) => <li key={file.name}><AppIcon app="console" size={14} /><span className="cv-t">{file.name}</span></li>)}</ul>
+                <p className="cv-kicker">MemWal / Product Discovery</p>
+                <ul className="cv-rows">{config.files.slice(0, 3).map((file) => <li key={file.name}><AppIcon app="console" size={14} /><span className="cv-t">{file.name}</span></li>)}</ul>
               </>
-            ) : <p className="cv-empty">Walrus Console is not connected.</p>,
-            { badge: <span className="badge amber">Example</span> })}
+            ) : <p className="cv-empty">No project folder connected.</p>)}
 
           {visible.has("agent") ? (
             <section ref={register("agent")} className="cv-section cv-agent" style={{ left: POS.agent.x, top: POS.agent.y }} aria-labelledby="cv-agent">
@@ -248,20 +262,7 @@ export function Canvas({ config, visible, viewport, onViewport, runPanelHidden, 
             </section>
           ) : null}
 
-          {section("tools", "Read context", <ToolRows tools={config.tools} />)}
-          {section("review", "Review findings",
-            <ul className="cv-rows">
-              {["Make save status easier to verify", "Make project memory easier to select", "Show the source behind a fact"].map((item) => (
-                <li key={item}><span className="cv-t">{item}</span></li>
-              ))}
-            </ul>,
-            { badge: <span className="badge amber">Example</span> })}
-          {section("save", "Save results",
-            <ul className="cv-rows">
-              <li><AppIcon app="memory" size={14} /><span className="cv-t">Approved findings · Not started</span></li>
-              <li><AppIcon app="console" size={14} /><span className="cv-t">Discovery report · Not started</span></li>
-            </ul>,
-            { badge: <span className="badge amber">Example</span> })}
+          {section("tools", "Tools", <ToolRows tools={config.tools} />)}
           {section("subAgents", "Sub-agents", config.subAgents.length ? <ul className="cv-rows">{config.subAgents.map((s) => <li key={s}><Bot size={13} /> {s}</li>)}</ul> : <p className="cv-empty">No sub-agents configured</p>)}
           {section("skills", "Skills", config.skills.length ? <ul className="cv-rows">{config.skills.map((s) => <li key={s}><Puzzle size={13} /> {s}</li>)}</ul> : <p className="cv-empty">No skills configured</p>)}
         </div>
@@ -270,7 +271,8 @@ export function Canvas({ config, visible, viewport, onViewport, runPanelHidden, 
       <p id="cv-keys" hidden>Use arrow keys to pan, plus and minus to zoom, 0 to reset.</p>
       <div className="cv-zoom" role="group" aria-label="Zoom">
         <button className="icon-btn" aria-label="Zoom in" onClick={() => zoomTo(viewport.zoom + ZOOM_STEP)} disabled={viewport.zoom >= ZOOM_MAX}><Plus size={13} /></button>
-        <button className="cv-pct" aria-label={`Zoom ${pct}%, reset to 100%`} onClick={() => { setAnimating(true); onViewport(DEFAULT_VIEWPORT); }}>{pct}%</button>
+        <button className="cv-pct" aria-label={`Zoom ${pct} percent`} onClick={() => fitWorkflow()}>{pct}%</button>
+        <button className="icon-btn" aria-label="Fit workflow" onClick={() => fitWorkflow()}>Fit</button>
         <button className="icon-btn" aria-label="Zoom out" onClick={() => zoomTo(viewport.zoom - ZOOM_STEP)} disabled={viewport.zoom <= ZOOM_MIN}><Minus size={13} /></button>
       </div>
     </div>
@@ -297,7 +299,7 @@ function ToolRows({ tools }: { tools: AgentConfig["tools"] }) {
             <p className="cv-kicker">{label}</p>
             <ul className="cv-rows">
               {rows.map((tool) => (
-                <li key={tool.id} title={tool.detail}><AppIcon app={tool.app} size={14} /><span className="cv-t">{tool.name}</span></li>
+                <li key={tool.id} title={tool.detail}><AppIcon app={tool.app} size={14} /><span className="cv-copy"><span className="cv-t">{tool.name}</span>{tool.technical ? <span className="cv-sub">{tool.technical}</span> : null}</span></li>
               ))}
             </ul>
           </div>

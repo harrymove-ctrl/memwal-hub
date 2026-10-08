@@ -2,7 +2,7 @@ import { SEED_AGENTS, INTEGRATIONS } from "../data/fixtures";
 import type { Agent, AgentConfig, AgentId } from "../domain/types";
 
 export const STORAGE_KEY = "bew-harness:builder:v1";
-export const STORAGE_VERSION = 7;
+export const STORAGE_VERSION = 8;
 
 export interface Viewport { x: number; y: number; zoom: number }
 
