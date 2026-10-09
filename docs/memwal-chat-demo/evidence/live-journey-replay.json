@@ -1,0 +1,158 @@
+{
+  "when": "2026-10-08T08:51:28.679Z",
+  "mode": "LIVE replay, recall only, nothing saved",
+  "steps": [
+    {
+      "step": "Fresh conversation (recall)",
+      "prompt": "Should we prioritize shared team workspaces next?",
+      "reply": "Not as the immediate top priority for the very next release, but you should begin scoping it now. \n\nHere is why:\n* **Current Roadmap vs. Audience:** Your next release is already committed to focusing on **onboarding**, and the product currently **targets solo developers**. Shifting entirely to team workspaces right now risks diluting your core onboarding improvements.\n* **Strategic Direction:** At the same time, **team collaboration is becoming a priority**, making shared workspaces a strong candidate for the release immediately following onboarding.\n* **Team Bandwidth:** Your team recently expanded to **four engineers** (up from the previous **two engineers**). This added capacity means you can deliver the onboarding release while having engineering bandwidth begin architectural planning for team features.\n\n**Recommendation:** Finish onboarding for the upcoming release, but dedicate discovery time to shared team workspaces so they are ready to build right after.\n\n***\n\n**Remembered facts that shaped this answer:**\n* *The next release focuses on onboarding.*\n* *The product targets solo developers.*\n* *Team collaboration is becoming a priority.*\n* *The engineering team has four engineers* (preferred over the older fact that the team had two engineers).",
+      "memory": {
+        "summary": "Memory used · 5 facts",
+        "facts": [
+          {
+            "text": "The engineering team has four engineers.",
+            "source": "Walrus blob NUuqPr47FDgInoEvpfQdxCGJmxU8yMWLX3Cvi7PLG6s · saved 10/8/2026, 4:46:46 PM · distance 0.753"
+          },
+          {
+            "text": "Team collaboration is becoming a priority.",
+            "source": "Walrus blob eAUBtQP7BKZLXCq8jU5pqtNE5XqcZrXXYjeJPnKoUuM · saved 10/8/2026, 4:46:45 PM · distance 0.405"
+          },
+          {
+            "text": "The team has two engineers.",
+            "source": "Walrus blob Lp70bwBtkda3dotU5_3cIJ-zcm5CNQIVvT2LZobq9RU · saved 10/8/2026, 4:45:42 PM · distance 0.723"
+          },
+          {
+            "text": "The next release focuses on onboarding.",
+            "source": "Walrus blob uEPnqP6L8dRyYmMLenzXWKIrFJM4ULVKzm9gvgvmZcM · saved 10/8/2026, 4:45:41 PM · distance 0.650"
+          },
+          {
+            "text": "The product targets solo developers.",
+            "source": "Walrus blob -zUHQ8skcmEBe2Jj7udrG00-nynKmeYFuTCCO343EpM · saved 10/8/2026, 4:45:41 PM · distance 0.698"
+          }
+        ]
+      },
+      "details": {
+        "Model reported": "gemini-3.8-flash",
+        "Model requested": "gemini-3.8-flash",
+        "Request shape": "system → system → user",
+        "Memory facts in request": "5",
+        "Conversation messages sent": "1",
+        "Finish reason": "stop",
+        "Tokens": "385 in · 244 out"
+      },
+      "suggestions": []
+    },
+    {
+      "step": "After reload, new conversation (recall)",
+      "prompt": "What do you already know about our product, team and release focus?",
+      "reply": "Here is what I know based on your Walrus Memory:\n\n* **Product:** The product targets solo developers (Fact 5), though team collaboration is now becoming a priority (Fact 2).\n* **Team:** The engineering team currently has four engineers (Fact 1). Note the change: this updates an earlier record that listed two engineers (Fact 3).\n* **Release Focus:** The next release focuses on onboarding (Fact 4).\n\n**Remembered facts that shaped this answer:**\n* **Fact 1 & Fact 3:** Team size (resolved conflict: updated from 2 to 4 engineers).\n* **Fact 2:** Emerging priority of team collaboration.\n* **Fact 4:** Next release focus on onboarding.\n* **Fact 5:** Target audience of solo developers.",
+      "memory": {
+        "summary": "Memory used · 5 facts",
+        "facts": [
+          {
+            "text": "The engineering team has four engineers.",
+            "source": "Walrus blob NUuqPr47FDgInoEvpfQdxCGJmxU8yMWLX3Cvi7PLG6s · saved 10/8/2026, 4:46:46 PM · distance 0.750"
+          },
+          {
+            "text": "Team collaboration is becoming a priority.",
+            "source": "Walrus blob eAUBtQP7BKZLXCq8jU5pqtNE5XqcZrXXYjeJPnKoUuM · saved 10/8/2026, 4:46:45 PM · distance 0.741"
+          },
+          {
+            "text": "The team has two engineers.",
+            "source": "Walrus blob Lp70bwBtkda3dotU5_3cIJ-zcm5CNQIVvT2LZobq9RU · saved 10/8/2026, 4:45:42 PM · distance 0.723"
+          },
+          {
+            "text": "The next release focuses on onboarding.",
+            "source": "Walrus blob uEPnqP6L8dRyYmMLenzXWKIrFJM4ULVKzm9gvgvmZcM · saved 10/8/2026, 4:45:41 PM · distance 0.586"
+          },
+          {
+            "text": "The product targets solo developers.",
+            "source": "Walrus blob -zUHQ8skcmEBe2Jj7udrG00-nynKmeYFuTCCO343EpM · saved 10/8/2026, 4:45:41 PM · distance 0.673"
+          }
+        ]
+      },
+      "details": {
+        "Model reported": "gemini-3.8-flash",
+        "Model requested": "gemini-3.8-flash",
+        "Request shape": "system → system → user",
+        "Memory facts in request": "5",
+        "Conversation messages sent": "1",
+        "Finish reason": "stop",
+        "Tokens": "391 in · 167 out"
+      },
+      "suggestions": []
+    },
+    {
+      "step": "New conversation after the revision (recall)",
+      "prompt": "How many engineers do we have, and should we prioritize shared team workspaces now?",
+      "reply": "You currently have **four engineers**. Note the change: memory previously recorded two engineers, but the most recent update confirms your team has four.\n\nRegarding **shared team workspaces**: you should not prioritize them for your immediate next release, but you should prepare them for the milestone right after. \n\nHere is how to sequence this:\n1. **Current milestone:** Stay focused on **onboarding**, which is already designated as the focus for your next release. \n2. **Next milestone:** Begin discovery on shared team workspaces now. While your product originally targeted **solo developers**, **team collaboration is becoming a priority**. Shared workspaces are a natural fit for this shift, and your expanded four-engineer capacity makes supporting team use cases feasible.\n\n**Remembered facts that shaped this answer:**\n* Fact 1 & Fact 3: The engineering team grew from two to four engineers (preferring the latest record of four).\n* Fact 4: The next release focuses on onboarding.\n* Fact 2: Team collaboration is becoming a priority.\n* Fact 5: The product targets solo developers.",
+      "memory": {
+        "summary": "Memory used · 5 facts",
+        "facts": [
+          {
+            "text": "The engineering team has four engineers.",
+            "source": "Walrus blob NUuqPr47FDgInoEvpfQdxCGJmxU8yMWLX3Cvi7PLG6s · saved 10/8/2026, 4:46:46 PM · distance 0.435"
+          },
+          {
+            "text": "Team collaboration is becoming a priority.",
+            "source": "Walrus blob eAUBtQP7BKZLXCq8jU5pqtNE5XqcZrXXYjeJPnKoUuM · saved 10/8/2026, 4:46:45 PM · distance 0.512"
+          },
+          {
+            "text": "The team has two engineers.",
+            "source": "Walrus blob Lp70bwBtkda3dotU5_3cIJ-zcm5CNQIVvT2LZobq9RU · saved 10/8/2026, 4:45:42 PM · distance 0.431"
+          },
+          {
+            "text": "The next release focuses on onboarding.",
+            "source": "Walrus blob uEPnqP6L8dRyYmMLenzXWKIrFJM4ULVKzm9gvgvmZcM · saved 10/8/2026, 4:45:41 PM · distance 0.762"
+          },
+          {
+            "text": "The product targets solo developers.",
+            "source": "Walrus blob -zUHQ8skcmEBe2Jj7udrG00-nynKmeYFuTCCO343EpM · saved 10/8/2026, 4:45:41 PM · distance 0.735"
+          }
+        ]
+      },
+      "details": {
+        "Model reported": "gemini-3.8-flash",
+        "Model requested": "gemini-3.8-flash",
+        "Request shape": "system → system → user",
+        "Memory facts in request": "5",
+        "Conversation messages sent": "1",
+        "Finish reason": "stop",
+        "Tokens": "393 in · 225 out"
+      },
+      "suggestions": []
+    }
+  ],
+  "chatRequestShapes": [
+    {
+      "use_memory": true,
+      "messages": [
+        {
+          "role": "user",
+          "characters": 49,
+          "sha256_prefix": "8d2d02f05074"
+        }
+      ]
+    },
+    {
+      "use_memory": true,
+      "messages": [
+        {
+          "role": "user",
+          "characters": 67,
+          "sha256_prefix": "b8f17ab097a3"
+        }
+      ]
+    },
+    {
+      "use_memory": true,
+      "messages": [
+        {
+          "role": "user",
+          "characters": 83,
+          "sha256_prefix": "26360ffcb613"
+        }
+      ]
+    }
+  ]
+}

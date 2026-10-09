@@ -1,0 +1,101 @@
+{
+  "when": "2026-10-08T08:36:57.796Z",
+  "results": [
+    {
+      "name": "ZRouter card shows Not configured",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "ZRouter description",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Memory card shows Not connected for a new user",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Console card says Unavailable",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Exactly one Console card",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Console card has no connect or key controls",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Dialog has the required fields",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "API key input is masked",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Base URL field shows a placeholder only",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Empty submit shows validation",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Escape closes the dialog",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Settings has one Console section",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Settings labels workspace sign-in",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Chat explains ZRouter is required",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Send disabled without a Ready model",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "No suggested memories before any run",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "No horizontal overflow at 390px",
+      "pass": true,
+      "detail": "overflow 0px"
+    },
+    {
+      "name": "Chat has no horizontal overflow at 390px",
+      "pass": true,
+      "detail": "overflow 0px"
+    },
+    {
+      "name": "Reduced motion stops the phase animation",
+      "pass": true,
+      "detail": ""
+    }
+  ],
+  "consoleErrors": []
+}

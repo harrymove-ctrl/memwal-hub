@@ -1,9 +1,18 @@
-.agent-body { flex: 1; min-height: 0; display: flex; }
-.unsaved { margin-left: 8px; color: var(--text-3); font-size: var(--fs-sm); }
+.agent-body { flex: 1; min-height: 0; min-width: 0; display: flex; }
+.unsaved { margin-left: 8px; color: var(--text-3); font-size: var(--fs-sm); white-space: nowrap; }
 .mobile-switch { margin: 8px; flex: none; }
 .mobile-switch button { height: 44px; }
+@media (max-width: 1180px) {
+  .bew-builder { --sidebar-w: 200px; --run-w: 320px; }
+}
+@media (max-width: 900px) {
+  .agent-body { flex-direction: column; }
+  .run { width: 100%; max-width: none; flex: none; height: 42vh; min-height: 240px; }
+  .canvas-wrap { margin: 8px; min-height: 320px; }
+}
 @media (max-width: 767px) {
   .agent-body { flex-direction: column; }
-  .page-head { padding: 0 4px; gap: 4px; }
+  .page-head { padding: 8px 4px; gap: 4px; }
   .page-head .crumbs > span { display: none; }
+  .run { height: auto; flex: 1; min-height: 0; }
 }

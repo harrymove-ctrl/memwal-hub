@@ -1,5 +1,5 @@
-import { useId, useRef } from "react";
-import { motion, useInView } from "motion/react";
+import { useEffect, useId, useRef, useState } from "react";
+import { motion } from "motion/react";
 
 /**
  * A construction-drawing entrance, after the `blueprint-animation` skill
@@ -26,7 +26,21 @@ export default function BlueprintReveal({
   className?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const inView = useInView(ref, { once: true, margin: "-40px" });
+  const [inView, setInView] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === "undefined") {
+      setInView(true);
+      return;
+    }
+    const observer = new IntersectionObserver(([entry]) => {
+      if (!entry?.isIntersecting) return;
+      setInView(true);
+      observer.disconnect();
+    }, { rootMargin: "-40px" });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
   const clipId = useId();
 
   return (

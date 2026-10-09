@@ -11,6 +11,36 @@ export const ZOOM_MAX = 2;
 export const ZOOM_STEP = 0.25;
 export const DEFAULT_VIEWPORT: Viewport = { x: 0, y: 0, zoom: 1 };
 
+/** Zoom and pan that puts every node inside the viewport. Null when there is nothing to fit. */
+export function fitViewport(
+  boxes: Array<{ x: number; y: number; width: number; height: number }>,
+  view: { width: number; height: number },
+  limits: { min: number; max: number; pad: number } = { min: ZOOM_MIN, max: ZOOM_MAX, pad: 24 },
+): Viewport | null {
+  if (!boxes.length || view.width <= 0 || view.height <= 0) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const box of boxes) {
+    if (![box.x, box.y, box.width, box.height].every(Number.isFinite) || box.width < 0 || box.height < 0) return null;
+    minX = Math.min(minX, box.x);
+    minY = Math.min(minY, box.y);
+    maxX = Math.max(maxX, box.x + box.width);
+    maxY = Math.max(maxY, box.y + box.height);
+  }
+  const width = Math.max(1, maxX - minX);
+  const height = Math.max(1, maxY - minY);
+  const availableWidth = Math.max(1, view.width - limits.pad * 2);
+  const availableHeight = Math.max(1, view.height - limits.pad * 2);
+  const raw = Math.min(limits.max, availableWidth / width, availableHeight / height);
+  const zoom = Math.round(Math.min(limits.max, Math.max(limits.min, raw)) * 20) / 20;
+  if (!Number.isFinite(zoom) || zoom <= 0) return null;
+  const x = limits.pad + (availableWidth - width * zoom) / 2 - minX * zoom;
+  const y = limits.pad + (availableHeight - height * zoom) / 2 - minY * zoom;
+  return Number.isFinite(x) && Number.isFinite(y) ? { x, y, zoom } : null;
+}
+
 /** World positions measured from the reference at 1440×900 (canvas origin = canvas top-left). */
 const POS: Record<SectionId, { x: number; y: number }> = {
   schedule: { x: 24, y: 48 }, triggers: { x: 24, y: 48 }, channels: { x: 24, y: 200 }, memory: { x: 24, y: 210 },
@@ -38,13 +68,14 @@ export function Canvas({ config, visible, viewport, onViewport, runPanelHidden, 
   const world = useRef<HTMLDivElement>(null);
   const nodes = useRef(new Map<SectionId, HTMLElement>());
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [stack, setStack] = useState<Partial<Record<SectionId, number>>>({});
   const [edges, setEdges] = useState<{ id: string; d: string; color: string; a: [number, number] }[]>([]);
   const [animating, setAnimating] = useState(false);
   const vp = useRef(viewport);
   useLayoutEffect(() => { vp.current = viewport; }, [viewport]);
 
-  const isOpen = (s: SectionId) => expanded[s] !== false;
-  const toggle = (s: SectionId) => setExpanded((e) => ({ ...e, [s]: !(e[s] !== false) }));
+  const isOpen = (s: SectionId) => expanded[s] ?? s !== "instructions";
+  const toggle = (s: SectionId) => setExpanded((e) => ({ ...e, [s]: !(e[s] ?? s !== "instructions") }));
 
   // Connectors use layout offsets inside the untransformed world, so they stay
   // attached at any zoom/pan and re-measure when sections resize.
@@ -80,9 +111,17 @@ export function Canvas({ config, visible, viewport, onViewport, runPanelHidden, 
     nodes.current.forEach((el) => ro.observe(el));
     return () => ro.disconnect();
   }, [measure, config, expanded]);
-
-
-
+  useLayoutEffect(() => {
+    let y = 48;
+    const next: Partial<Record<SectionId, number>> = {};
+    for (const id of ["triggers", "memory", "files"] as const) {
+      const el = nodes.current.get(id);
+      if (!el) continue;
+      next[id] = y;
+      y += el.offsetHeight + 20;
+    }
+    setStack((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+  }, [config, expanded, visible]);
   // Pan like the reference: drag the canvas or a card. A click without movement still toggles.
   const drag = useRef<{ px: number; py: number; x: number; y: number; moved: boolean } | null>(null);
   const onPointerDown = (e: React.PointerEvent) => {
@@ -132,6 +171,15 @@ export function Canvas({ config, visible, viewport, onViewport, runPanelHidden, 
     setAnimating(true);
     onViewport({ zoom, x: cx - wx * zoom, y: cy - wy * zoom });
   };
+  const fitWorkflow = () => {
+    const el = wrap.current;
+    if (!el) return;
+    const boxes = [...nodes.current.values()].map((node) => ({ x: node.offsetLeft, y: node.offsetTop, width: node.offsetWidth, height: node.offsetHeight }));
+    const next = fitViewport(boxes, { width: el.clientWidth, height: el.clientHeight });
+    if (!next) return;
+    setAnimating(true);
+    onViewport(next);
+  };
   const pct = Math.round(viewport.zoom * 100);
 
   const register = (s: SectionId) => (el: HTMLElement | null) => { if (el) nodes.current.set(s, el); else nodes.current.delete(s); };
@@ -144,7 +192,7 @@ export function Canvas({ config, visible, viewport, onViewport, runPanelHidden, 
         className="cv-section"
         data-tone={opts.tone ?? "plain"}
         data-reveal
-        style={{ left: POS[s].x, top: POS[s].y }}
+        style={{ left: POS[s].x, top: stack[s] ?? POS[s].y }}
         aria-labelledby={`cv-${s}`}
       >
         <div className="cv-head">
@@ -211,20 +259,17 @@ export function Canvas({ config, visible, viewport, onViewport, runPanelHidden, 
             ) : <p className="cv-note">No channel is connected.</p>)}
           {section("memory", "Memory",
             config.memory.length ? (
-              <>
-                <p className="cv-kicker">Example memory scopes</p>
-                <ul className="cv-rows">{config.memory.map((m) => <li key={m.id}><BookOpen size={13} /><span><span className="cv-t">{m.name}</span>{m.detail ? <span className="cv-sub">{m.detail}</span> : null}</span></li>)}</ul>
-              </>
-            ) : <p className="cv-empty">No memory scope is connected.</p>,
-            { badge: <span className="badge amber">Example</span> })}
-          {section("files", config.filesTitle ?? "Research files",
+              <ul className="cv-rows">{config.memory.map((m) => (
+                <li key={m.id} title={m.detail}><BookOpen size={13} /><span className="cv-copy"><span className="cv-t">{m.name}</span>{m.detail ? <span className="cv-sub">{m.detail}</span> : null}</span></li>
+              ))}</ul>
+            ) : <p className="cv-empty">No memory scope connected.</p>)}
+          {section("files", "Research files",
             config.files?.length ? (
               <>
-                <p className="cv-kicker">MemWal / Product Discovery · Example files</p>
-                <ul className="cv-rows">{config.files.map((file) => <li key={file.name}><AppIcon app="console" size={14} /><span className="cv-t">{file.name}</span></li>)}</ul>
+                <p className="cv-kicker">MemWal / Product Discovery</p>
+                <ul className="cv-rows">{config.files.slice(0, 3).map((file) => <li key={file.name}><AppIcon app="console" size={14} /><span className="cv-t">{file.name}</span></li>)}</ul>
               </>
-            ) : <p className="cv-empty">Walrus Console is not connected.</p>,
-            { badge: <span className="badge amber">Example</span> })}
+            ) : <p className="cv-empty">No project folder connected.</p>)}
 
           {visible.has("agent") ? (
             <section ref={register("agent")} className="cv-section cv-agent" style={{ left: POS.agent.x, top: POS.agent.y }} aria-labelledby="cv-agent">
@@ -241,27 +286,13 @@ export function Canvas({ config, visible, viewport, onViewport, runPanelHidden, 
               <div className="cv-collapse" data-open={isOpen("instructions")}><div>
                 <div className="cv-card cv-instr">
                   <button className="btn cv-instr-edit" onClick={() => onEdit("instructions")}>Edit</button>
-                  <strong>{config.name}</strong>
                   <p>{config.instructions}</p>
                 </div>
               </div></div>
             </section>
           ) : null}
 
-          {section("tools", "Read context", <ToolRows tools={config.tools} />)}
-          {section("review", "Review findings",
-            <ul className="cv-rows">
-              {["Make save status easier to verify", "Make project memory easier to select", "Show the source behind a fact"].map((item) => (
-                <li key={item}><span className="cv-t">{item}</span></li>
-              ))}
-            </ul>,
-            { badge: <span className="badge amber">Example</span> })}
-          {section("save", "Save results",
-            <ul className="cv-rows">
-              <li><AppIcon app="memory" size={14} /><span className="cv-t">Approved findings · Not started</span></li>
-              <li><AppIcon app="console" size={14} /><span className="cv-t">Discovery report · Not started</span></li>
-            </ul>,
-            { badge: <span className="badge amber">Example</span> })}
+          {section("tools", "Tools", <ToolRows tools={config.tools} />)}
           {section("subAgents", "Sub-agents", config.subAgents.length ? <ul className="cv-rows">{config.subAgents.map((s) => <li key={s}><Bot size={13} /> {s}</li>)}</ul> : <p className="cv-empty">No sub-agents configured</p>)}
           {section("skills", "Skills", config.skills.length ? <ul className="cv-rows">{config.skills.map((s) => <li key={s}><Puzzle size={13} /> {s}</li>)}</ul> : <p className="cv-empty">No skills configured</p>)}
         </div>
@@ -270,7 +301,8 @@ export function Canvas({ config, visible, viewport, onViewport, runPanelHidden, 
       <p id="cv-keys" hidden>Use arrow keys to pan, plus and minus to zoom, 0 to reset.</p>
       <div className="cv-zoom" role="group" aria-label="Zoom">
         <button className="icon-btn" aria-label="Zoom in" onClick={() => zoomTo(viewport.zoom + ZOOM_STEP)} disabled={viewport.zoom >= ZOOM_MAX}><Plus size={13} /></button>
-        <button className="cv-pct" aria-label={`Zoom ${pct}%, reset to 100%`} onClick={() => { setAnimating(true); onViewport(DEFAULT_VIEWPORT); }}>{pct}%</button>
+        <button className="cv-pct" aria-label="Reset to 100 percent" onClick={() => { setAnimating(true); onViewport(DEFAULT_VIEWPORT); }}>{pct}%</button>
+        <button className="icon-btn" aria-label="Fit workflow" onClick={() => fitWorkflow()}>Fit</button>
         <button className="icon-btn" aria-label="Zoom out" onClick={() => zoomTo(viewport.zoom - ZOOM_STEP)} disabled={viewport.zoom <= ZOOM_MIN}><Minus size={13} /></button>
       </div>
     </div>
@@ -284,6 +316,9 @@ function ToolRows({ tools }: { tools: AgentConfig["tools"] }) {
     ["save", "Save"],
     ["advanced", "Advanced"],
   ] as const;
+  if (!tools.length) {
+    return <p className="cv-empty">No memory tools configured</p>;
+  }
   return (
     <div className="cv-tool-groups">
       {groups.map(([group, label]) => {
@@ -297,7 +332,7 @@ function ToolRows({ tools }: { tools: AgentConfig["tools"] }) {
             <p className="cv-kicker">{label}</p>
             <ul className="cv-rows">
               {rows.map((tool) => (
-                <li key={tool.id} title={tool.detail}><AppIcon app={tool.app} size={14} /><span className="cv-t">{tool.name}</span></li>
+                <li key={tool.id} title={tool.detail}><AppIcon app={tool.app} size={14} /><span className="cv-copy"><span className="cv-t">{tool.name}</span>{tool.technical ? <span className="cv-sub">{tool.technical}</span> : null}</span></li>
               ))}
             </ul>
           </div>

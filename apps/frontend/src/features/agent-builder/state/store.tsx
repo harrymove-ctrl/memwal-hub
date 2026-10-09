@@ -1,16 +1,18 @@
 import { createContext, useContext, useEffect, useMemo, useReducer, type ReactNode } from "react";
-import type { AgentConfig, AgentId } from "../domain/types";
+import type { Agent, AgentConfig, AgentId, ToolRef } from "../domain/types";
 import { loadState, saveState, type PersistedState, type Viewport } from "./persist";
 
 export type Action =
   | { type: "editDraft"; agentId: AgentId; patch: Partial<AgentConfig> }
   | { type: "discardDraft"; agentId: AgentId }
-  | { type: "commitDraft"; agentId: AgentId }
+  | { type: "commitDraft"; agentId: AgentId; name?: string; revision?: number; instructions?: string }
+  | { type: "updateAgent"; agentId: AgentId; name: string; revision: number; instructions?: string; projectId?: string; tools?: ToolRef[] }
   | { type: "setSidebarCollapsed"; value: boolean }
   | { type: "dismissUsageNotice" }
   | { type: "setRunPanelHidden"; value: boolean }
   | { type: "setViewport"; agentId: AgentId; viewport: Viewport }
-  | { type: "setConnected"; appId: string; value: boolean };
+  | { type: "setConnected"; appId: string; value: boolean }
+  | { type: "addAgent"; agent: Agent };
 
 function omitDraft(drafts: PersistedState["drafts"], agentId: string) {
   const next = { ...drafts };
@@ -29,14 +31,113 @@ export function reducer(s: PersistedState, a: Action): PersistedState {
       return { ...s, drafts: omitDraft(s.drafts, a.agentId) };
     case "commitDraft": {
       const draft = s.drafts[a.agentId];
-      if (!draft) return s;
-      return { ...s, drafts: omitDraft(s.drafts, a.agentId), agents: s.agents.map((x) => (x.id === a.agentId ? { ...x, config: draft } : x)) };
+      if (!draft && !a.name && !a.instructions) return s;
+      const finalName = a.name ?? draft?.name;
+      const finalInstructions = a.instructions ?? draft?.instructions;
+      const finalRevision = a.revision;
+      return {
+        ...s,
+        drafts: omitDraft(s.drafts, a.agentId),
+        agents: s.agents.map((x) => {
+          if (x.id !== a.agentId) return x;
+          const baseConfig = draft ?? x.config;
+          return {
+            ...x,
+            name: finalName ?? x.name,
+            revision: finalRevision ?? x.revision,
+            config: {
+              ...baseConfig,
+              ...(finalName ? { name: finalName } : {}),
+              ...(finalInstructions ? { instructions: finalInstructions } : {}),
+            },
+          };
+        }),
+      };
+    }
+    case "updateAgent": {
+      const exists = s.agents.some((x) => x.id === a.agentId);
+      if (exists) {
+        return {
+          ...s,
+          agents: s.agents.map((x) => {
+            if (x.id !== a.agentId) return x;
+            const draft = s.drafts[a.agentId];
+            return {
+              ...x,
+              name: a.name,
+              revision: a.revision,
+              projectId: a.projectId ?? x.projectId,
+              config: {
+                ...x.config,
+                name: a.name,
+                instructions: draft ? x.config.instructions : (a.instructions ?? x.config.instructions),
+                tools: draft || !a.tools ? x.config.tools : a.tools,
+              },
+            };
+          }),
+        };
+      }
+      const template = s.agents.find((x) => x.id === "product-discovery") ?? s.agents[0];
+      const newAgent: Agent = {
+        ...(template ?? {
+          id: a.agentId,
+          name: a.name,
+          config: {
+            name: a.name,
+            description: "",
+            instructions: a.instructions ?? "",
+            schedule: null,
+            triggers: [],
+            identity: null,
+            channels: [],
+            memory: [],
+            tools: [],
+            subAgents: [],
+            skills: [],
+          },
+        }),
+        id: a.agentId,
+        name: a.name,
+        revision: a.revision,
+        projectId: a.projectId,
+        config: {
+          ...(template?.config ?? {
+            name: a.name,
+            description: "",
+            instructions: a.instructions ?? "",
+            schedule: null,
+            triggers: [],
+            identity: null,
+            channels: [],
+            memory: [],
+            tools: [],
+            subAgents: [],
+            skills: [],
+          }),
+          name: a.name,
+          instructions: a.instructions ?? template?.config.instructions ?? "",
+        },
+      };
+      return {
+        ...s,
+        agents: [...s.agents, newAgent],
+      };
     }
     case "setSidebarCollapsed": return { ...s, sidebarCollapsed: a.value };
     case "dismissUsageNotice": return { ...s, usageNoticeDismissed: true };
     case "setRunPanelHidden": return { ...s, runPanelHidden: a.value };
     case "setViewport": return { ...s, viewports: { ...s.viewports, [a.agentId]: a.viewport } };
     case "setConnected": return { ...s, connected: { ...s.connected, [a.appId]: a.value } };
+    case "addAgent": {
+      const exists = s.agents.some((agent) => agent.id === a.agent.id);
+      if (exists) {
+        return {
+          ...s,
+          agents: s.agents.map((agent) => (agent.id === a.agent.id ? { ...agent, ...a.agent } : agent)),
+        };
+      }
+      return { ...s, agents: [...s.agents, a.agent] };
+    }
   }
 }
 

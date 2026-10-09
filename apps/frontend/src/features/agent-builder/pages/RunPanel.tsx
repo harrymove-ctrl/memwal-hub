@@ -1,8 +1,10 @@
-import { ArrowDown, ArrowUp, Check, ChevronRight, Grip, Info, Paperclip, RotateCcw, Square, Wrench, X, Zap, AlertCircle, Loader2 } from "lucide-react";
-import { useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { ArrowDown, ArrowUp, Check, ChevronRight, Play, Square, Wrench, X, Zap, Loader2 } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { NavLink } from "react-router";
 import { AppIcon } from "../components/AppIcon";
 import type { AgentExample, RunEvent, RunState } from "../domain/types";
-import { DiscoveryFlow } from "./DiscoveryFlow";
+import { useMemorySession } from "../state/integration-queries";
+import { DiscoveryFlow, type DiscoveryStage } from "./DiscoveryFlow";
 import "./run.css";
 
 interface Props {
@@ -14,17 +16,49 @@ interface Props {
   onSend: (text: string) => void;
   demo: boolean;
   discovery?: boolean;
+  agentName?: string;
+  chatTo?: string;
   onNotify: (message: string) => void;
+  onPreviewExample?: () => void;
+  onOpenChat?: () => void;
+  previewTrigger?: number;
+  savedNotice?: string | null;
 }
 
 const NEAR_BOTTOM_PX = 48;
+const SUGGESTED_PROMPT = "Review this week’s MemWal feedback and identify the strongest product opportunities.";
 
-export function RunPanel({ run, busy, onStop, onRetry, onSend, discovery, onNotify }: Props) {
+export function RunPanel({
+  run,
+  busy,
+  onStop,
+  onSend,
+  discovery,
+  onNotify,
+  agentName,
+  chatTo,
+  onPreviewExample,
+  onOpenChat,
+  previewTrigger,
+  savedNotice,
+}: Props) {
+  const [stage, setStage] = useState<DiscoveryStage | "idle" | "reading" | "analyzing">("idle");
+  // A new preview request moves the panel to the file step. Adjusting state while rendering
+  // (React's documented pattern) replaces the previous effect that set state after the fact.
+  const [seenTrigger, setSeenTrigger] = useState(previewTrigger ?? 0);
+  if ((previewTrigger ?? 0) !== seenTrigger) {
+    setSeenTrigger(previewTrigger ?? 0);
+    if (previewTrigger && previewTrigger > 0) setStage("files");
+  }
+  const playback = useRef<number[]>([]);
+  const memory = useMemorySession();
+  const memoryReady = memory.data?.walrus.status === "verified";
+  useEffect(() => () => { playback.current.forEach((id) => window.clearTimeout(id)); }, []);
   const scroller = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
-  const fileInput = useRef<HTMLInputElement>(null);
+
   const sending = useRef(false);
 
   const onScroll = () => {
@@ -45,8 +79,21 @@ export function RunPanel({ run, busy, onStop, onRetry, onSend, discovery, onNoti
   };
 
   const canSend = text.trim().length > 0 && !busy;
+  const stopPlayback = () => { playback.current.forEach((id) => window.clearTimeout(id)); playback.current = []; };
+  const beginRead = () => {
+    stopPlayback();
+    setStage("reading");
+    playback.current = [
+      window.setTimeout(() => setStage("analyzing"), 450),
+      window.setTimeout(() => setStage("review"), 900),
+    ];
+  };
   const send = () => {
     if (!canSend || sending.current) return;
+    if (discovery) {
+      onNotify("Example preview. This text was not sent to a model or to Memory.");
+      return;
+    }
     sending.current = true;
     onSend(text.trim());
     setText("");
@@ -66,26 +113,97 @@ export function RunPanel({ run, busy, onStop, onRetry, onSend, discovery, onNoti
   return (
     <aside className="run" aria-label="Run">
       <div className="run-card">
-        <p><span className="chip"><Zap size={11} /> product-discovery-agent</span> Past 7 days</p>
-        {busy ? (
-          <button className="run-stop" aria-label="Stop run" onClick={onStop}><Square size={10} fill="currentColor" /></button>
-        ) : run.status === "failed" || run.status === "stopped" ? (
-          <button className="btn" onClick={onRetry}><RotateCcw size={12} /> Retry</button>
-        ) : null}
-      </div>
-
-      <div className="run-scroll" ref={scroller} onScroll={onScroll} aria-live="off">
-        <div className="run-events">
-
-          {groupEvents(run.events).map((item) => <EventView key={item.key} item={item} />)}
-          {discovery && onNotify ? <DiscoveryFlow onNotify={onNotify} /> : null}
-          {run.status === "failed" ? (
-            <div className="run-error" role="alert"><AlertCircle size={14} /> {run.error}</div>
+        <p>
+          <span className="chip"><Zap size={11} /> {agentName || "Agent"}</span>{" "}
+          {run.revision != null ? (
+            <span className="chip rev-chip" data-testid="run-revision-chip">
+              Revision {run.revision}
+            </span>
           ) : null}
-          {run.status === "stopped" ? <p className="run-meta">Stopped by you.</p> : null}
-          {run.status !== "idle" ? (
-            <div className="run-progress" data-active={busy}>
-              <Grip size={13} aria-hidden /> {busy ? runPhase(run) : "Example run · prototype data"}
+          {discovery ? <span className="chip">Example — no model calls or remote writes</span> : null}
+        </p>
+        {busy ? (
+          <button className="run-stop" aria-label="Stop run" onClick={onStop}><Square size={10} /> Stop</button>
+        ) : discovery && stage === "idle" ? (
+          <div className="run-actions">
+            <button type="button" className="btn btn-primary" onClick={() => { onNotify(memoryReady ? "Memory is ready. Console file upload is still unavailable." : "Memory is not connected. A live run cannot read files until you connect sources."); window.dispatchEvent(new Event("bew:open-settings")); }}>{memoryReady ? "Memory ready" : "Connect sources"}</button>
+            <NavLink
+              className="btn"
+              to={chatTo || "/builder/chat"}
+              onClick={(e) => {
+                if (onOpenChat) {
+                  e.preventDefault();
+                  onOpenChat();
+                }
+              }}
+            >
+              Open chat
+            </NavLink>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                if (onPreviewExample) {
+                  onPreviewExample();
+                } else {
+                  setStage("files");
+                }
+              }}
+            >
+              <Play size={12} /> Preview example
+            </button>
+          </div>
+        ) : null}
+        {discovery && stage === "idle" ? <p className="run-connect">{memoryReady ? "Memory ready" : "Memory not connected"} · Console not connected{memoryReady ? null : <> · <button type="button" className="link" onClick={() => window.dispatchEvent(new Event("bew:open-settings"))}>Connect</button></>}</p> : null}
+      </div>
+      <div className="run-scroll" ref={scroller} onScroll={onScroll} aria-live="off">
+        {savedNotice ? (
+          <div
+            className="run-notice"
+            role="status"
+            data-testid="saved-version-notice"
+            style={{
+              padding: "8px 12px",
+              margin: "12px 16px 0",
+              background: "#fef3c7",
+              color: "#92400e",
+              borderRadius: 6,
+              fontSize: 12,
+              fontWeight: 500,
+            }}
+          >
+            {savedNotice}
+          </div>
+        ) : null}
+        <div className="run-events">
+          {run.revision != null ? (
+            <p className="run-meta" data-testid="run-details-revision">
+              Run configuration: Revision {run.revision}
+            </p>
+          ) : null}
+          {discovery && stage === "idle" && run.status === "idle" ? (
+            <>
+              <p className="ev-text">Live chat uses the saved agent. Preview example uses fixed sample files and does not call a model.</p>
+              <button type="button" className="suggest" onClick={() => setText(SUGGESTED_PROMPT)}>{SUGGESTED_PROMPT}</button>
+            </>
+          ) : null}
+          {groupEvents(run.events).map((item) => <EventView key={item.key} item={item} />)}
+          {discovery && stage === "reading" ? <p className="run-meta" role="status">Example — reading selected files</p> : null}
+          {discovery && stage === "analyzing" ? <p className="run-meta" role="status">Example — analyzing sample feedback</p> : null}
+          {discovery && (stage === "files" || stage === "review" || stage === "save") ? (
+            <>
+              <p className="run-meta" role="status">Example — no model calls or remote writes</p>
+              <DiscoveryFlow stage={stage} exampleMode onRead={beginRead} onSave={() => setStage("save")} onNotify={onNotify} />
+            </>
+          ) : null}
+          {discovery && stage !== "idle" ? (
+            <div className="composer-row">
+              <button type="button" className="btn" onClick={() => { stopPlayback(); setStage("idle"); }}>Exit example</button>
+              {onOpenChat ? (
+                <button type="button" className="btn" onClick={onOpenChat}>Open chat</button>
+              ) : chatTo ? (
+                <NavLink className="btn" to={chatTo}>Open chat</NavLink>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -95,7 +213,7 @@ export function RunPanel({ run, busy, onStop, onRetry, onSend, discovery, onNoti
       ) : null}
 
       <div className="run-foot">
-        <div className="usage" role="note"><Info size={13} /> <span>Memory and Console are not connected.</span></div>
+
         <form className="composer" onSubmit={(e) => { e.preventDefault(); send(); }}>
           <label htmlFor="followup" className="sr-only">Follow-up message</label>
           <textarea id="followup" rows={1} placeholder="Add a follow-up" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={onKey} />
@@ -107,9 +225,8 @@ export function RunPanel({ run, busy, onStop, onRetry, onSend, discovery, onNoti
             </ul>
           ) : null}
           <div className="composer-row">
-            <button type="button" className="icon-btn boxed" aria-label="Attach a file" onClick={() => fileInput.current?.click()}><Paperclip size={13} /></button>
-            <input ref={fileInput} type="file" hidden multiple onChange={(e) => { setFiles((x) => [...x, ...Array.from(e.target.files ?? [])]); e.target.value = ""; }} />
-            <span className="hint">{busy ? "Wait for the run to finish or stop it" : "Enter to send · Shift+Enter for a new line"}</span>
+
+            <span className="hint">{discovery ? "Example preview. Enter does not send a live message." : busy ? "Wait for the run to finish or stop it" : "Enter to send · Shift+Enter for a new line"}</span>
             <button type="submit" className="send" aria-label="Send" disabled={!canSend}><ArrowUp size={13} /></button>
           </div>
         </form>
@@ -172,13 +289,6 @@ function EventView({ item }: { item: Item }) {
   }
 }
 
-function runPhase(run: RunState) {
-  const running = [...run.events].reverse().find((event) => event.t === "tool" && event.status === "running");
-  if (running?.t === "tool" && running.app === "memory" && running.name.toLowerCase().includes("remember")) return "Saving findings";
-  if (running?.t === "tool" && running.app === "memory") return "Reading memories";
-  if (running?.t === "tool" && running.app === "console") return "Reading files";
-  if (run.events.some((event) => event.t === "toolGroup" && event.id === "save")) return "Waiting for review";
-  return "Comparing opportunities";
-}
+
 
 

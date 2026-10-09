@@ -1,0 +1,39 @@
+{
+  "what": "Authoritative Walrus Memory write count for this demo's agent (read-only queries, no writes)",
+  "when_utc": "2026-10-08T08:52:40Z",
+  "network": "mainnet",
+  "memwal_package_id": "0xe7c16fbea0560e7057e2bf7422feaa4fb313749fc69c9e9092fac7a33b81d7f5",
+  "agent_id_as_used_by_memwal": {
+    "meaning": "delegate public key (Ed25519), stamped on every blob as memwal_agent_id",
+    "value": "e8a8ef123c66165ee26cff24df130459152801c2f3d72ab41cb027ca86f3bef9"
+  },
+  "on_chain_sui_mainnet": {
+    "memwalBlobsForThisAgent": 5,
+    "memwalBlobsForThisAgentByNamespace": {
+      "bew-harness/product-discovery": 5
+    },
+    "memwalBlobsForThisPackage": 477,
+    "metadataChecked": 548,
+    "walrusBlobObjectsOwned": 548
+  },
+  "relayer_index_demo_namespace": [
+    {
+      "memoryCount": 5,
+      "name": "bew-harness/product-discovery",
+      "updatedAt": "2026-10-08T08:48:52.520281Z"
+    }
+  ],
+  "relayer_index_all_namespaces": {
+    "namespaces": 50,
+    "memory_count_total": 477
+  },
+  "sources": {
+    "namespaces": "Walrus Memory relayer listNamespaces (memory_count per namespace, relayer index)",
+    "on_chain": "Sui Mainnet: Walrus Blob objects owned by the account owner, filtered by memwal_package_id and memwal_agent_id metadata"
+  },
+  "notes": [
+    "walrusBlobObjectsOwned and memwalBlobsForThisPackage count every Walrus Blob object owned by the account owner wallet, which other agents (other delegate keys) also write to.",
+    "memwalBlobsForThisAgent counts only blobs whose memwal_agent_id equals this demo's delegate public key and whose memwal_package_id is the Mainnet MemWal package.",
+    "The account owner address and account object ID are deliberately left out of this file."
+  ]
+}

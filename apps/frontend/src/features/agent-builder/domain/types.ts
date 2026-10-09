@@ -42,7 +42,14 @@ export interface AgentExample {
   suggested?: string;
 }
 
-export interface Agent { id: AgentId; name: string; config: AgentConfig; example?: AgentExample }
+export interface Agent {
+  id: AgentId;
+  name: string;
+  config: AgentConfig;
+  example?: AgentExample;
+  revision?: number;
+  projectId?: string;
+}
 
 export type SectionId =
   | "schedule" | "triggers" | "channels" | "memory" | "files" | "agent" | "instructions"
@@ -68,6 +75,7 @@ export interface RunState {
   elapsedMs: number;
   tokens: number;
   error: string | null;
+  revision?: number | null;
 }
 
 export interface Clock {

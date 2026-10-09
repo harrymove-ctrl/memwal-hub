@@ -44,7 +44,7 @@ export default function WalletProviders({ children }: { children: ReactNode }) {
     <QueryClientProvider client={queryClient}>
       <SuiClientProvider networks={networkConfig} defaultNetwork="testnet">
         <EnokiRegistrar>
-          <WalletProvider autoConnect slushWallet={{ name: "Bew Harness" }}>
+          <WalletProvider autoConnect slushWallet={{ name: "MemWal" }}>
             {children}
           </WalletProvider>
         </EnokiRegistrar>

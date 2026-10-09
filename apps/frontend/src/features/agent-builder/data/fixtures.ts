@@ -34,8 +34,8 @@ const productDiscovery: Agent = {
     description: "Turns customer feedback, research, and product context into ranked opportunities.",
     instructions: "Recall the product strategy and previous opportunity evaluations first. Then review the selected research files. Identify repeated problems, compare them with existing ideas, and rank opportunities by user impact, evidence strength, and fit with our current priorities. Present findings for review. Do not save every speculative idea.",
     memory: [
-      { id: "strategy", name: "product-strategy-h2", detail: "Example scope. Target users, product goals, constraints, and opportunity-scoring criteria. Not a separate access boundary." },
-      { id: "archive", name: "opportunities-archive", detail: "Example scope. Previously evaluated opportunities, evidence, decisions, and follow-up questions. Recall can miss a duplicate." },
+      { id: "strategy", name: "product-strategy-h2", detail: "Goals, audience, and constraints" },
+      { id: "archive", name: "opportunities-archive", detail: "Past evaluations and decisions" },
     ],
     filesTitle: "Research files",
     files: [
@@ -48,7 +48,7 @@ const productDiscovery: Agent = {
       read("recall-past", "Recall past opportunities", "memory", "Previous evaluations, rejected ideas, and open hypotheses.", "memwal_recall"),
       read("find-research", "Find research files", "console", "Locate interview notes, feedback exports, and briefs. Not a search of file contents.", "list_files"),
       read("read-evidence", "Read research evidence", "console", "Download and decrypt a selected file. The agent reads it after download.", "download_file"),
-      save("remember-findings", "Remember findings", "memory", "Save concise findings the user approves.", "memwal_remember_bulk"),
+      save("remember-findings", "Remember approved findings", "memory", "Save concise findings the user approves.", "memwal_remember_bulk"),
       save("save-report", "Save discovery report", "console", "Encrypt and upload the report and evidence references.", "upload_file"),
     ],
   }),
@@ -251,13 +251,14 @@ export const DEMO_TOKENS_PER_MS = 0.04;
 
 export interface IntegrationApp { id: string; name: string; description: string; category: string; connected: boolean }
 export const INTEGRATIONS: IntegrationApp[] = [
+  { id: "zroute", name: "ZRouter / OpenAI-compatible proxy", description: "Use your proxy endpoint and model for chat responses.", category: "Models", connected: false },
   { id: "memory", name: "Walrus Memory", description: "Save and recall facts, preferences, and decisions", category: "Context", connected: false },
   { id: "console", name: "Walrus Console", description: "Organize, upload, and retrieve encrypted files", category: "Context", connected: false },
   { id: "github", name: "GitHub", description: "Optional. Feature requests and reported problems, when connected", category: "Code and CI", connected: false },
   { id: "claude", name: "Claude", description: "A model provider. Connecting it does not connect Memory or Console", category: "Models", connected: false },
   { id: "gpt", name: "GPT", description: "A model provider. Connecting it does not connect Memory or Console", category: "Models", connected: false },
 ];
-export const RECOMMENDED = ["memory", "console"];
+export const RECOMMENDED = ["zroute", "memory", "console"];
 export const CATEGORIES = ["Context", "Models", "Code and CI"];
 
 export interface Skill { id: string; description: string; type: "Design" | "Frontend" | "Backend" | "Workflow"; agents: string[]; author: string; updatedAgo: string; updatedRank: number }

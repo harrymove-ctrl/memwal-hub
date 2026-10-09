@@ -1,150 +1,112 @@
-import type { RunCallbacks, RunService } from "./run-service";
+import { BuilderApiError, requestJson } from "./api-client";
 
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080").replace(/\/$/, "");
-
+/** Walrus Memory connection metadata for the signed-in user. No key material. */
 export interface WalrusStatus {
   configured: boolean;
+  /** `verified`, `requires_reconnect`, `key_stored`, `not_connected` or `signed_out`. */
   status: string;
   accountId: string | null;
   namespace: string;
   serverUrl: string;
+  network: string;
   lastError: string | null;
+  lastErrorCode: string | null;
+  lastVerifiedAt: string | null;
 }
 
 export interface MemorySession {
+  signedIn: boolean;
   address: string | null;
   walrus: WalrusStatus;
 }
 
-const unavailable: WalrusStatus = {
-  configured: false,
-  status: "unavailable",
-  accountId: null,
-  namespace: "bew-harness/product-discovery",
-  serverUrl: "https://relayer.memory.walrus.xyz",
-  lastError: null,
-};
+export const MAINNET_RELAYER = "https://relayer.memory.walrus.xyz";
+export const DEFAULT_NAMESPACE = "bew-harness/product-discovery";
 
-export async function memorySession(): Promise<MemorySession> {
-  const response = await fetch(`${apiBaseUrl}/memory/session`, { credentials: "include" });
-  if (!response.ok) return { address: null, walrus: unavailable };
-  const body = (await response.json()) as {
-    address?: string | null;
-    walrus?: {
-      configured?: boolean;
-      status?: string;
-      account_id?: string | null;
-      namespace?: string;
-      server_url?: string;
-      last_error?: string | null;
-    };
-  };
+interface ApiWalrus {
+  configured: boolean;
+  status: string;
+  account_id: string | null;
+  namespace: string;
+  server_url: string;
+  network: string;
+  last_error: string | null;
+  last_error_code: string | null;
+  last_verified_at: string | null;
+}
+
+function walrusFromApi(body: ApiWalrus): WalrusStatus {
   return {
-    address: body.address || null,
-    walrus: {
-      configured: Boolean(body.walrus?.configured),
-      status: body.walrus?.status ?? "unavailable",
-      accountId: body.walrus?.account_id ?? null,
-      namespace: body.walrus?.namespace ?? unavailable.namespace,
-      serverUrl: body.walrus?.server_url ?? unavailable.serverUrl,
-      lastError: body.walrus?.last_error ?? null,
-    },
+    configured: body.configured,
+    status: body.status,
+    accountId: body.account_id,
+    namespace: body.namespace,
+    serverUrl: body.server_url,
+    network: body.network,
+    lastError: body.last_error,
+    lastErrorCode: body.last_error_code,
+    lastVerifiedAt: body.last_verified_at,
   };
 }
 
-export async function saveWalrus(input: {
+/** Throws `BuilderApiError` when the backend fails; never reports that as "Not connected". */
+export async function memorySession(): Promise<MemorySession> {
+  const body = await requestJson<{ signed_in: boolean; address: string | null; walrus: ApiWalrus }>("/memory/session");
+  return { signedIn: body.signed_in, address: body.address, walrus: walrusFromApi(body.walrus) };
+}
+
+export interface SaveWalrusInput {
   accountId: string;
   delegateKey: string;
   namespace: string;
-  serverUrl: string;
-}): Promise<void> {
-  const response = await fetch(`${apiBaseUrl}/memory/walrus`, {
+}
+
+/** Saves, then verifies with a real signed relayer call before the backend reports Ready. */
+export async function saveWalrus(input: SaveWalrusInput): Promise<WalrusStatus> {
+  const body = await requestJson<ApiWalrus>("/memory/walrus", {
     method: "POST",
-    credentials: "include",
-    headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      account_id: input.accountId,
-      delegate_key: input.delegateKey,
-      namespace: input.namespace,
-      server_url: input.serverUrl,
+      account_id: input.accountId.trim(),
+      delegate_key: input.delegateKey.trim() || null,
+      namespace: input.namespace.trim(),
+      server_url: MAINNET_RELAYER,
+      network: "mainnet",
     }),
   });
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { message?: string } | null;
-    throw new Error(body?.message ?? "Walrus settings were not saved.");
-  }
+  return walrusFromApi(body);
 }
 
 export async function clearWalrus(): Promise<void> {
-  const response = await fetch(`${apiBaseUrl}/memory/walrus`, {
-    method: "DELETE",
-    credentials: "include",
-  });
-  if (!response.ok) throw new Error("Walrus settings were not cleared.");
+  await requestJson<ApiWalrus>("/memory/walrus", { method: "DELETE" });
 }
 
-export function createMissingWalrusService(address: string): RunService {
-  return {
-    mode: "connected",
-    start(_agentId, _prompt, cb) {
-      const detail = `Signed in as ${address}. Walrus is not verified for this user. Open Settings and save a delegate key. No blob was invented.`;
-      cb.onEvent({ t: "text", id: "recall-missing", text: detail });
-      cb.onDone({ status: "failed", error: detail });
-      return { stop() {} };
-    },
-  };
+const MEMORY_ERRORS: Record<string, string> = {
+  invalid_credentials: "Invalid credentials: the relayer rejected this delegate key for this account.",
+  account_not_found: "Account not found on Sui Mainnet.",
+  wrong_network: "The relayer is not on Mainnet.",
+  relayer_unavailable: "The Walrus Memory relayer is unavailable.",
+  relayer_rate_limited: "The relayer is rate limiting requests.",
+  unsupported_version: "Unsupported SDK or relayer API version.",
+  sdk_unavailable: "The backend could not run the Walrus Memory SDK.",
+  backend_unavailable: "The workspace backend is unavailable.",
+};
+
+export function memoryErrorLabel(code: string | null | undefined, fallback?: string | null): string {
+  return (code && MEMORY_ERRORS[code]) || fallback || "Walrus Memory needs attention.";
 }
 
-export function createWalletRecallService(address: string): RunService {
-  return {
-    mode: "connected",
-    start(_agentId, prompt, cb) {
-      const controller = new AbortController();
-      const query = prompt?.trim() || `What should ${address} remember from earlier sessions?`;
-      void runRecall(address, query, cb, controller.signal);
-      return { stop: () => controller.abort() };
-    },
-  };
+export type MemoryBadge = { label: "Not connected" | "Verifying" | "Ready" | "Needs reconnect" | "Unavailable" | "Sign in required"; tone: "ok" | "warn" | "muted" };
+
+export function memoryBadge(session: MemorySession | undefined, error: unknown, verifying: boolean): MemoryBadge {
+  if (verifying) return { label: "Verifying", tone: "muted" };
+  if (error) return { label: "Unavailable", tone: "warn" };
+  if (!session) return { label: "Verifying", tone: "muted" };
+  if (!session.signedIn) return { label: "Sign in required", tone: "muted" };
+  if (session.walrus.status === "verified") return { label: "Ready", tone: "ok" };
+  if (session.walrus.status === "requires_reconnect" || session.walrus.status === "key_stored") return { label: "Needs reconnect", tone: "warn" };
+  return { label: "Not connected", tone: "muted" };
 }
 
-async function runRecall(address: string, query: string, cb: RunCallbacks, signal: AbortSignal) {
-  const started = Date.now();
-  cb.onEvent({ t: "text", id: "recall-prompt", text: `Signed in as ${address}. One recall: ${query}` });
-  cb.onEvent({ t: "toolGroup", id: "walrus", label: "Walrus recall" });
-  cb.onEvent({
-    t: "tool",
-    id: "walrus-recall",
-    group: "walrus",
-    name: "Walrus recall",
-    app: "walrus",
-    status: "running",
-  });
-  try {
-    const response = await fetch(`${apiBaseUrl}/memory/recall`, {
-      method: "POST",
-      credentials: "include",
-      signal,
-    });
-    const body = (await response.json()) as {
-      detail?: string;
-      status?: string;
-      message?: string;
-      memories?: { text: string; blob_id?: string | null }[];
-    };
-    const memories = body.memories ?? [];
-    const detail = [
-      body.detail || body.message || "Walrus recall returned no detail.",
-      ...memories.map((memory) => `${memory.blob_id ?? "blob"}: ${memory.text}`),
-    ].join("\n");
-    const ok = body.status === "recalled";
-    cb.onEvent({ t: "toolStatus", id: "walrus-recall", status: ok ? "done" : "error" });
-    cb.onEvent({ t: "text", id: "recall-result", text: detail });
-    cb.onProgress(Date.now() - started, 0);
-    cb.onDone(ok ? { status: "completed" } : { status: "failed", error: detail });
-  } catch (error) {
-    if (signal.aborted) return;
-    const detail = error instanceof Error ? error.message : "Walrus recall failed.";
-    cb.onEvent({ t: "toolStatus", id: "walrus-recall", status: "error" });
-    cb.onDone({ status: "failed", error: detail });
-  }
+export function isBackendDown(error: unknown): boolean {
+  return error instanceof BuilderApiError && error.status === 0;
 }

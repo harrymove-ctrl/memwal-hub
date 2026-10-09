@@ -1,12 +1,9 @@
 import { useState } from "react";
 
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080").replace(/\/$/, "");
-
 const FILES = [
   { name: "customer-interviews.md", excerpt: "Example excerpt. People could not tell whether a memory had been saved." },
   { name: "community-feedback.md", excerpt: "Example excerpt. Project memory was hard to select." },
   { name: "onboarding-observations.md", excerpt: "Example excerpt. Recalled facts did not show a source." },
-  { name: "weekly-discovery-report.md", excerpt: "Example excerpt. This file is not a stored Console object." },
 ];
 
 const FINDINGS = [
@@ -16,59 +13,53 @@ const FINDINGS = [
 ];
 
 type Row = "pending" | "approved" | "dismissed";
-type Dest = { status: string; detail: string };
+type Dest = { status: "Not started" | "Saving" | "Saved" | "Failed" | "Skipped"; detail: string };
+export type DiscoveryStage = "files" | "review" | "save";
 
-export function DiscoveryFlow({ onNotify }: { onNotify: (message: string) => void }) {
+export function DiscoveryFlow({
+  stage,
+  exampleMode,
+  onRead,
+  onSave,
+  onNotify,
+}: {
+  stage: DiscoveryStage;
+  exampleMode: boolean;
+  onRead: () => void;
+  onSave: () => void;
+  onNotify: (message: string) => void;
+}) {
   const [selected, setSelected] = useState<string[]>([]);
   const [opened, setOpened] = useState<string[]>([]);
   const [rows, setRows] = useState<Record<string, Row>>({});
+  const [notes, setNotes] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState<string | null>(null);
-  const [draft, setDraft] = useState("");
-  const [memory, setMemory] = useState<Dest>({ status: "Not started", detail: "Approved findings stay here until you save." });
-  const [consoleSave, setConsoleSave] = useState<Dest>({ status: "Not started", detail: "The report is separate from Memory." });
+  const [memory, setMemory] = useState<Dest>({ status: "Not started", detail: "Save only after you select findings." });
+  const consoleSave: Dest = { status: "Skipped", detail: "Console upload is not available. Nothing was uploaded." };
   const [partial, setPartial] = useState("");
+  const selectedCount = Object.values(rows).filter((row) => row === "approved").length;
 
-  function toggle(name: string) {
-    setSelected((current) => current.includes(name) ? current.filter((item) => item !== name) : [...current, name]);
-  }
-
-  function openSelected() {
-    if (selected.length === 0) {
-      onNotify("Select an example file first. Console is not connected, so nothing is downloaded.");
-      return;
-    }
+  function readSelected() {
+    if (selected.length === 0) return;
     setOpened(selected);
+    onRead();
   }
 
-  async function saveApproved() {
+  function saveMemory() {
     const approved = FINDINGS.filter((item) => rows[item.id] === "approved");
     if (approved.length === 0) {
-      onNotify("Approve a finding before saving. Nothing was written.");
+      onNotify("Select a finding before the example save. Nothing was written.");
       return;
     }
-    setMemory({ status: "Saving", detail: "Checking the Memory connection." });
-    setConsoleSave({ status: "Saving", detail: "Checking Console. This does not upload yet." });
-    const text = approved.map((item) => item.title).join("\n");
-    const [memoryResult, consoleResult] = await Promise.all([
-      post("/memory/remember", { text }),
-      post("/memory/console/report", { text }),
-    ]);
-    setMemory(memoryResult);
-    setConsoleSave(consoleResult);
-    if (memoryResult.status === "saved" && consoleResult.status !== "saved") {
-      setPartial("Findings saved to Walrus Memory. The discovery report could not be uploaded to Walrus Console.");
-    } else if (consoleResult.status === "saved" && memoryResult.status !== "saved") {
-      setPartial("The discovery report was accepted by Console. Findings were not saved to Walrus Memory.");
-    } else if (memoryResult.status !== "saved" && consoleResult.status !== "saved") {
-      setPartial("Neither destination completed. Memory and Console are separate, and neither save was confirmed.");
-    } else {
-      setPartial("");
-    }
+    setMemory({ status: "Skipped", detail: "Example only. Open chat to save real findings to Memory." });
+    setPartial("Example run. Memory was not called.");
+    onSave();
   }
 
+
   function downloadReport() {
-    const approved = FINDINGS.filter((item) => rows[item.id] === "approved").map((item) => item.title);
-    const body = ["MemWal discovery report", "Example data. This file was created in the browser. It was not uploaded.", ...approved].join("\n");
+    const lines = FINDINGS.filter((item) => rows[item.id] === "approved").map((item) => notes[item.id] || item.title);
+    const body = ["MemWal discovery report", "Created in this browser. Not uploaded.", ...lines].join("\n");
     const url = URL.createObjectURL(new Blob([body], { type: "text/plain" }));
     const link = document.createElement("a");
     link.href = url;
@@ -78,64 +69,64 @@ export function DiscoveryFlow({ onNotify }: { onNotify: (message: string) => voi
   }
 
   return (
-    <section className="discovery" aria-label="Review and save">
-      <h2>Select research files</h2>
-      <p className="hint">Example files. Walrus Console is not connected, so opening one does not decrypt a stored object.</p>
-      <ul className="discovery-files">
-        {FILES.map((file) => (
-          <li key={file.name}>
-            <label><input type="checkbox" checked={selected.includes(file.name)} onChange={() => toggle(file.name)} /> {file.name}</label>
-            {opened.includes(file.name) ? <p>{file.excerpt}</p> : null}
-          </li>
-        ))}
-      </ul>
-      <button type="button" className="btn" onClick={openSelected}>Open selected</button>
-
-      <h2>Review findings</h2>
-      <ul className="discovery-findings">
-        {FINDINGS.map((item) => (
-          <li key={item.id} data-state={rows[item.id] ?? "pending"}>
-            <strong>{item.title}</strong>
-            <p>{editing === item.id ? <input className="input" value={draft} onChange={(event) => setDraft(event.target.value)} /> : item.problem}</p>
-            <div className="composer-row">
-              <button type="button" className="btn" onClick={() => setRows((current) => ({ ...current, [item.id]: "approved" }))}>Approve</button>
-              <button type="button" className="btn" onClick={() => { setEditing(item.id); setDraft(item.problem); }}>Edit</button>
-              <button type="button" className="btn" onClick={() => setRows((current) => ({ ...current, [item.id]: "dismissed" }))}>Dismiss</button>
-            </div>
-          </li>
-        ))}
-      </ul>
-
-      <h2>Save results</h2>
-      <p><span className="badge">{memory.status}</span> Walrus Memory. {memory.detail}</p>
-      <p><span className="badge amber">{consoleSave.status}</span> Walrus Console. {consoleSave.detail}</p>
-      <button type="button" className="btn btn-primary" onClick={() => void saveApproved()}>Save approved findings</button>
-      {partial ? (
-        <div className="run-error" role="status">
-          <p>{partial}</p>
-          <button type="button" className="btn" onClick={() => void saveApproved()}>Retry report upload</button>
+    <section className="discovery" aria-label="Discovery steps">
+      <p className="run-meta" role="status">{exampleMode ? "Example — no model calls or remote writes" : "Open chat for a live run. This panel does not call Memory or Console."}</p>
+      {stage === "files" ? (
+        <>
+          <h2>Choose research files</h2>
+          <p className="hint">{selected.length} selected. Example files. Nothing is downloaded.</p>
+          <ul className="discovery-files">
+            {FILES.map((file) => (
+              <li key={file.name}>
+                <label><input type="checkbox" checked={selected.includes(file.name)} onChange={() => setSelected((current) => current.includes(file.name) ? current.filter((item) => item !== file.name) : [...current, file.name])} /><span><span className="cv-t">{file.name}</span><span className="cv-sub">Example file</span></span></label>
+              </li>
+            ))}
+          </ul>
+          <button type="button" className="btn btn-primary" disabled={selected.length === 0} onClick={readSelected}>Read selected files</button>
+          <button type="button" className="btn" onClick={onRead}>Continue without files</button>
+        </>
+      ) : null}
+      {stage === "review" || stage === "save" ? (
+        <>
+          <h2>Review findings</h2>
+          <p className="hint">Example run. These are not stored records.</p>
+          <ul className="discovery-findings">
+            {FINDINGS.map((item) => rows[item.id] === "dismissed" ? null : (
+              <li key={item.id}>
+                <strong>{item.title}</strong>
+                {editing === item.id ? (
+                  <input className="input" value={notes[item.id] ?? item.problem} onChange={(event) => setNotes((current) => ({ ...current, [item.id]: event.target.value }))} />
+                ) : <p>{notes[item.id] ?? item.problem}</p>}
+                {opened.length ? <p className="hint">Example file: {opened[0]}</p> : null}
+                <div className="composer-row">
+                  <button type="button" className="btn btn-primary" aria-pressed={rows[item.id] === "approved"} onClick={() => setRows((current) => ({ ...current, [item.id]: current[item.id] === "approved" ? "pending" : "approved" }))}>{rows[item.id] === "approved" ? "Selected" : "Select"}</button>
+                  <button type="button" className="btn" onClick={() => setEditing(editing === item.id ? null : item.id)}>Edit</button>
+                  <button type="button" className="btn" onClick={() => setRows((current) => ({ ...current, [item.id]: "dismissed" }))}>Dismiss</button>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <div className="discovery-foot"><span>{selectedCount} findings selected</span><button type="button" className="btn" disabled={selectedCount === 0} onClick={saveMemory}>Preview save (not sent)</button></div>
+        </>
+      ) : null}
+      {stage === "save" ? (
+        <>
+          <h2>Save</h2>
+          <p><span className="badge">{memory.status}</span> {memory.detail}</p>
+          <p><span className="badge amber">{consoleSave.status}</span> {consoleSave.detail}</p>
+          <p className="hint">Console upload is unavailable. The download stays on this computer.</p>
+          <button type="button" className="btn" disabled>Console upload unavailable</button>
           <button type="button" className="btn" onClick={downloadReport}>Download report locally</button>
-          <button type="button" className="btn" onClick={() => setPartial("")}>Dismiss</button>
-        </div>
+
+          {partial ? (
+            <div className="run-error" role="status">
+              <p>{partial}</p>
+              <button type="button" className="btn" onClick={() => setPartial("")}>Dismiss</button>
+            </div>
+          ) : null}
+        </>
       ) : null}
     </section>
   );
 }
 
-async function post(path: string, body: { text: string }): Promise<Dest> {
-  try {
-    const response = await fetch(`${apiBaseUrl}${path}`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const payload = await response.json() as { status?: string; detail?: string; message?: string };
-    return {
-      status: payload.status === "saved" ? "Saved" : "Failed",
-      detail: payload.detail || payload.message || "The save was not confirmed.",
-    };
-  } catch {
-    return { status: "Failed", detail: "The save request did not complete." };
-  }
-}

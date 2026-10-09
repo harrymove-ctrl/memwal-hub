@@ -77,6 +77,21 @@ if (!globalThis.ResizeObserver) {
     ResizeObserverStub as unknown as typeof ResizeObserver;
 }
 
+// jsdom has no matchMedia; report a desktop viewport with no motion preference.
+if (typeof window.matchMedia !== "function") {
+  window.matchMedia = (query: string) =>
+    ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }) as MediaQueryList;
+}
+
 afterEach(() => {
   cleanup();
 });

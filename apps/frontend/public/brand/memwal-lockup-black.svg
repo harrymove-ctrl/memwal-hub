@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 168 32" fill="none" role="img" aria-label="MemWal">
+  <defs>
+    <mask id="memwal-lockup-black-eye" maskUnits="userSpaceOnUse">
+      <rect width="32" height="32" fill="#fff"/>
+      <circle cx="16" cy="17.15" r="1.55"/>
+    </mask>
+  </defs>
+  <g mask="url(#memwal-lockup-black-eye)" stroke="#202127" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8.15 25.2 V8.1 L16 17.15"/>
+    <path d="M23.85 25.2 V8.1 L16 17.15"/>
+  </g>
+  <text x="40" y="22.5" fill="#202127" font-family="Avenir Next, Inter, ui-sans-serif, system-ui, sans-serif" font-size="20" font-weight="600" letter-spacing="-0.04em">MemWal</text>
+</svg>

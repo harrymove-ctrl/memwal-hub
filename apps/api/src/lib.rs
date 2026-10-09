@@ -1,12 +1,16 @@
 mod agent_auth;
 mod agent_pools;
+mod agents;
 mod auth;
 mod config;
 mod connections;
+mod conversations;
+mod discovery;
 mod error;
 mod gateway;
 mod health;
 mod memory;
+mod model_proxy;
 mod openapi;
 mod organizations;
 mod playground;
@@ -34,6 +38,14 @@ use tower_http::cors::CorsLayer;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
+pub use agent_auth::{
+    DecideDeviceAuthorization, DeviceAuthorizationStarted, DeviceAuthorizationToken,
+    PendingDeviceAuthorization, PollDeviceAuthorization, StartDeviceAuthorization,
+};
+use agent_auth::{
+    decide_device_authorization, list_pending_authorizations, poll_device_authorization,
+    start_device_authorization,
+};
 pub use agent_pools::{
     AgentPool, AgentPoolAvailability, AgentPoolAvailabilityStatus, AgentPoolJoinRequest,
     AgentPoolPerson, AgentPoolRequestStatus, AgentPoolShareEvidence, AgentPoolUsageMetric,
@@ -76,6 +88,11 @@ pub use organizations::{
     OrganizationUsageBreakdown, OrganizationUsageDay, OrganizationUsageQuery,
     ShareOrganizationAgent,
 };
+pub use reasoning::{
+    ActionDecision, AuthorizeActionRequest, CreatePlanRequest, ExecutionPlan, PlanStep,
+    ReasoningDailyStat, ReasoningEvent, VerificationResult, VerifyOutcomeRequest,
+};
+use reasoning::{authorize_handler, daily_stats, list_events, plan_handler, verify_handler};
 pub use telegram::{
     CreateTelegramOrder, SepayResult, SepayTransaction, TelegramAudience, TelegramOrder,
 };
@@ -89,19 +106,6 @@ pub use telegram_catalogue::{
 };
 use telegram_catalogue::{
     adjust_product, catalogue, create_product, full_catalogue, get_product, restock_product,
-};
-pub use reasoning::{
-    ActionDecision, AuthorizeActionRequest, CreatePlanRequest, ExecutionPlan, PlanStep,
-    ReasoningDailyStat, ReasoningEvent, VerificationResult, VerifyOutcomeRequest,
-};
-use reasoning::{authorize_handler, daily_stats, list_events, plan_handler, verify_handler};
-pub use agent_auth::{
-    DecideDeviceAuthorization, DeviceAuthorizationStarted, DeviceAuthorizationToken,
-    PendingDeviceAuthorization, PollDeviceAuthorization, StartDeviceAuthorization,
-};
-use agent_auth::{
-    decide_device_authorization, list_pending_authorizations, poll_device_authorization,
-    start_device_authorization,
 };
 
 #[derive(Clone)]
@@ -184,9 +188,45 @@ pub fn app(state: AppState) -> Router {
         .route("/auth/logout", post(logout))
         .route("/memory/session", get(memory::session))
         .route("/memory/walrus", post(memory::save).delete(memory::clear))
-        .route("/memory/recall", post(memory::recall))
-        .route("/memory/remember", post(memory::remember))
         .route("/memory/console/report", post(memory::console_report))
+        .route("/memory/stats", get(memory::stats))
+        .route(
+            "/model-proxy",
+            get(model_proxy::get_status)
+                .post(model_proxy::save)
+                .delete(model_proxy::disconnect),
+        )
+        .route("/model-proxy/test", post(model_proxy::test))
+        .route(
+            "/model-proxy/models",
+            get(model_proxy::models).post(model_proxy::discover_models),
+        )
+        .route("/discovery/chat", post(discovery::chat))
+        .route("/discovery/suggest", post(discovery::suggest))
+        .route("/discovery/memories", post(discovery::save_facts))
+        .route("/discovery/memories/status", post(discovery::fact_status))
+        .route(
+            "/projects",
+            get(conversations::list_projects).post(conversations::create_project),
+        )
+        .route(
+            "/projects/{id}/conversations",
+            get(conversations::list_conversations).post(conversations::create_conversation),
+        )
+        .route(
+            "/conversations/{id}",
+            get(conversations::get_conversation).post(conversations::update_conversation),
+        )
+        .route(
+            "/conversations/{id}/messages",
+            post(conversations::append_user),
+        )
+        .route(
+            "/conversations/{id}/replies",
+            post(conversations::append_reply),
+        )
+        .route("/builder-agents", post(agents::save_revision))
+        .route("/builder-agents/{agent_key}", get(agents::get_revision))
         .route("/auth/refresh", post(refresh))
         .route("/auth/wallet/nonce", post(wallet_nonce))
         .route("/auth/wallet/login", post(wallet_login))
@@ -561,7 +601,9 @@ mod tests {
                     .method("POST")
                     .uri("/reasoning/verify")
                     .header("content-type", "application/json")
-                    .body(Body::from(r#"{"task":"fix bug","completed_steps":[],"evidence":"none"}"#))
+                    .body(Body::from(
+                        r#"{"task":"fix bug","completed_steps":[],"evidence":"none"}"#,
+                    ))
                     .expect("request should build"),
             )
             .await

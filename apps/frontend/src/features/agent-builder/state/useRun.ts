@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentId, RunEvent, RunState } from "../domain/types";
 import type { RunHandle, RunService } from "../services/run-service";
 
-const idle = (agentId: AgentId): RunState => ({ agentId, status: "idle", events: [], elapsedMs: 0, tokens: 0, error: null });
+const idle = (agentId: AgentId): RunState => ({ agentId, status: "idle", events: [], elapsedMs: 0, tokens: 0, error: null, revision: null });
 
 /**
  * Explicit lifecycle: idle → starting → running → completed | stopped | failed.
@@ -26,10 +26,16 @@ export function useRun(service: RunService, agentId: AgentId, autoStart: boolean
   }, []);
 
   const start = useCallback(
-    (prompt: string | null) => {
+    (prompt: string | null, revision?: number | null) => {
       handle.current?.stop();
       const my = ++gen.current;
-      setRun((r) => ({ ...(prompt ? r : idle(agentId)), agentId, status: "starting", error: null }));
+      setRun((r) => ({
+        ...(prompt ? r : idle(agentId)),
+        agentId,
+        status: "starting",
+        error: null,
+        revision: revision !== undefined ? revision : (r.revision ?? null),
+      }));
       const apply = (fn: (r: RunState) => RunState) => { if (gen.current === my) setRun(fn); };
       handle.current = service.start(agentId, prompt, {
         onEvent: (e: RunEvent) =>

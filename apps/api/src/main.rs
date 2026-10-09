@@ -1,4 +1,4 @@
-use std::{env, net::Ipv6Addr, time::Duration};
+use std::{env, net::Ipv4Addr, time::Duration};
 
 use chrono::{DateTime, Duration as ChronoDuration, NaiveDate, Utc};
 use reqwest::Client;
@@ -41,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     sqlx::migrate!("./migrations").run(&pool).await?;
 
-    let address = (Ipv6Addr::UNSPECIFIED, port()?);
+    let address = (Ipv4Addr::UNSPECIFIED, port()?);
     let listener = TcpListener::bind(address).await?;
     let config = hub_william_backend::AppConfig::from_env()?;
     let http = Client::builder()
