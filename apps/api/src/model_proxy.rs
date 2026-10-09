@@ -674,12 +674,10 @@ pub fn valid_model_id(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || b"._:/@+-".contains(&byte))
 }
 
-/// Rejects state-changing requests that do not come from an allowed browser
-/// origin (defence in depth on top of CORS and SameSite cookies).
+/// Rejects requests that do not come from an allowed browser origin (defence
+/// in depth on top of CORS and SameSite cookies).
 pub(crate) fn foreign_origin(state: &AppState, headers: &HeaderMap) -> Option<Response> {
-    let allowed = headers
-        .get(ORIGIN)
-        .is_some_and(|origin| crate::browser_origins(&state.config).contains(origin));
+    let allowed = origin_allowed(&crate::browser_origins(&state.config), headers);
     (!allowed).then(|| {
         json_error(
             StatusCode::FORBIDDEN,
@@ -687,6 +685,20 @@ pub(crate) fn foreign_origin(state: &AppState, headers: &HeaderMap) -> Option<Re
             "This request must come from the workspace app.",
         )
     })
+}
+
+/// An allowed `Origin` passes. Browsers omit `Origin` on same-origin GET and
+/// HEAD requests, which is how the deployed app reaches the API through its
+/// same-origin `/api` proxy, so a request without `Origin` passes only when
+/// Fetch Metadata marks it `same-origin`. A foreign `Origin`, a cross-site
+/// request, or a request with neither header is rejected.
+fn origin_allowed(allowed: &[axum::http::HeaderValue], headers: &HeaderMap) -> bool {
+    match headers.get(ORIGIN) {
+        Some(origin) => allowed.contains(origin),
+        None => headers
+            .get("sec-fetch-site")
+            .is_some_and(|site| site.as_bytes() == b"same-origin"),
+    }
 }
 
 #[derive(Clone)]
@@ -1244,8 +1256,50 @@ mod tests {
 
     use super::{
         ProxyErrorCode, SseParser, blocked_ip, classify_status, collect_stream_completion,
-        completion_text, endpoint, normalize_base_url, upstream_message, valid_model_id,
+        completion_text, endpoint, normalize_base_url, origin_allowed, upstream_message,
+        valid_model_id,
     };
+
+    #[test]
+    fn same_origin_reads_without_an_origin_header_pass_and_foreign_requests_fail() {
+        use axum::http::{HeaderMap, HeaderValue};
+        let allowed = [HeaderValue::from_static("https://app.example")];
+        let headers = |pairs: &[(&'static str, &'static str)]| {
+            let mut map = HeaderMap::new();
+            for (name, value) in pairs {
+                map.insert(*name, HeaderValue::from_static(value));
+            }
+            map
+        };
+        assert!(origin_allowed(
+            &allowed,
+            &headers(&[("origin", "https://app.example")])
+        ));
+        assert!(origin_allowed(
+            &allowed,
+            &headers(&[("sec-fetch-site", "same-origin")])
+        ));
+        assert!(!origin_allowed(
+            &allowed,
+            &headers(&[("origin", "https://attacker.example")])
+        ));
+        assert!(!origin_allowed(
+            &allowed,
+            &headers(&[
+                ("origin", "https://attacker.example"),
+                ("sec-fetch-site", "same-origin")
+            ])
+        ));
+        assert!(!origin_allowed(
+            &allowed,
+            &headers(&[("sec-fetch-site", "cross-site")])
+        ));
+        assert!(!origin_allowed(
+            &allowed,
+            &headers(&[("sec-fetch-site", "same-site")])
+        ));
+        assert!(!origin_allowed(&allowed, &headers(&[])));
+    }
 
     #[test]
     fn base_urls_are_normalized_without_inventing_segments() {
