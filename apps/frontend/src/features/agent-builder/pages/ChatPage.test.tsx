@@ -187,7 +187,8 @@ describe("ChatPage (mocked backend)", () => {
     const button = await screen.findByRole("button", { name: "New chat" });
     await waitFor(() => expect(button).toBeEnabled());
     fireEvent.click(button);
-    expect(await screen.findByRole("button", { name: "Archive New chat" })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for New chat" }));
+    expect(screen.getByRole("menuitem", { name: "Archive" })).toBeInTheDocument();
     expect(created).toHaveLength(1);
     expect(created[0].body).toMatchObject({ request_id: expect.any(String) });
   });

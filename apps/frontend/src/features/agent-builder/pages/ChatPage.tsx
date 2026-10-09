@@ -176,6 +176,7 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
   const [creating, setCreating] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [draftChoice, setDraftChoice] = useState(false);
+  const [chatsOpen, setChatsOpen] = useState(true);
   const [loadedAgent, setAgentInfo] = useState<{ key: string; name: string; revision: number } | null>(null);
   // Only the agent named in the URL counts; a stale row from a previous agent is ignored.
   const agentInfo = loadedAgent && loadedAgent.key === agentKey ? loadedAgent : null;
@@ -719,6 +720,7 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
           ) : null}
         </div>
         <div className="actions">
+          <button type="button" className="btn" aria-expanded={chatsOpen} onClick={() => setChatsOpen((open) => !open)}>{chatsOpen ? "Hide chats" : "Show chats"}</button>
           <button type="button" className="btn" disabled={creating || (turns.length === 0 && !draft && !projectId)} onClick={() => newChat()} title={pendingWrites ? "Saves already sent keep running on Walrus" : undefined}><Plus size={12} /> New chat</button>
           {draftChoice ? (
             <span className="dc-row">
@@ -772,6 +774,7 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
             hasMore={moreCursor !== null}
             onMore={loadMoreChats}
             onRetry={retryHistory}
+            collapsed={!chatsOpen}
           />
           <div className="dc-main">
         <div className="dc-scroll" ref={scroller} onScroll={onScroll}>
@@ -1082,7 +1085,7 @@ function storedTurn(message: StoredMessage): Turn {
   };
 }
 
-function HistoryRail({ projects, projectId, chats, conversationId, error, note, creating, projectName, onProjectName, onCreateProject, onSelectProject, onSelectChat, onArchive, onRename, hasMore, onMore, onRetry }: {
+function HistoryRail({ projects, projectId, chats, conversationId, error, note, creating, projectName, onProjectName, onCreateProject, onSelectProject, onSelectChat, onArchive, onRename, hasMore, onMore, onRetry, collapsed }: {
   projects: Project[] | null;
   projectId: string;
   chats: ConversationSummary[];
@@ -1100,11 +1103,13 @@ function HistoryRail({ projects, projectId, chats, conversationId, error, note, 
   hasMore: boolean;
   onMore: () => void;
   onRetry: () => void;
+  collapsed: boolean;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [title, setTitle] = useState("");
+  const [menu, setMenu] = useState<string | null>(null);
   return (
-    <aside className="dc-history" aria-label="Projects and chats">
+    <aside className={collapsed ? "dc-history is-collapsed" : "dc-history"} aria-label="Projects and chats">
       {error ? <p className="dc-muted" role="alert">{error} <button type="button" className="btn" onClick={onRetry}>Retry</button></p> : null}
       {projects === null && !error ? <p className="dc-muted">Loading projects…</p> : null}
       {projects?.length === 0 ? (
@@ -1128,14 +1133,25 @@ function HistoryRail({ projects, projectId, chats, conversationId, error, note, 
           {chats.map((chat) => (
             <li key={chat.id}>
               {editing === chat.id ? (
-                <form onSubmit={(event) => { event.preventDefault(); onRename(chat.id, title); setEditing(null); }}>
+                <form className="dc-rename" onSubmit={(event) => { event.preventDefault(); onRename(chat.id, title); setEditing(null); }}>
                   <input className="input" aria-label={`Title for ${chat.title}`} value={title} onChange={(event) => setTitle(event.target.value)} />
+                  <button type="submit" className="btn">Save title</button>
+                  <button type="button" className="btn" onClick={() => setEditing(null)}>Cancel</button>
                 </form>
               ) : (
-                <button type="button" aria-current={chat.id === conversationId} onClick={() => onSelectChat(chat.id)}>{chat.title}</button>
+                <>
+                  <button type="button" className="dc-chat-title" title={chat.title} aria-current={chat.id === conversationId ? "true" : undefined} onClick={() => onSelectChat(chat.id)}>{chat.title}</button>
+                  <div className="dc-chat-menu">
+                    <button type="button" aria-haspopup="menu" aria-expanded={menu === chat.id} aria-label={`Actions for ${chat.title}`} onClick={() => setMenu(menu === chat.id ? null : chat.id)}>⋯</button>
+                    {menu === chat.id ? (
+                      <div role="menu">
+                        <button type="button" role="menuitem" onClick={() => { setEditing(chat.id); setTitle(chat.title); setMenu(null); }}>Rename</button>
+                        <button type="button" role="menuitem" title="Archiving hides this chat. It does not delete Walrus memories." onClick={() => { onArchive(chat.id); setMenu(null); }}>Archive</button>
+                      </div>
+                    ) : null}
+                  </div>
+                </>
               )}
-              <button type="button" aria-label={`Rename ${chat.title}`} onClick={() => { setEditing(chat.id); setTitle(chat.title); }}>Rename</button>
-              <button type="button" aria-label={`Archive ${chat.title}`} title="Archiving hides this chat. It does not delete Walrus memories." onClick={() => onArchive(chat.id)}>Archive</button>
             </li>
           ))}
           {chats.length === 0 ? <li className="dc-muted">No chats yet. New chat starts one.</li> : null}

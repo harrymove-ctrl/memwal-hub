@@ -2,13 +2,19 @@
 .dc { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
 .dc-body { flex: 1; min-height: 0; display: flex; }
 .dc-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
-.dc-history { width: 220px; flex: none; overflow: auto; border-right: 1px solid var(--line); padding: 8px; display: grid; align-content: start; gap: 8px; }
+.dc-history { width: 280px; flex: none; overflow: auto; border-right: 1px solid var(--line); padding: 8px; display: grid; align-content: start; gap: 8px; }
+.dc-history.is-collapsed { display: none; }
 .dc-history .input, .dc-history .btn { width: 100%; }
 .dc-chat-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
-.dc-chat-list li { display: flex; gap: 4px; }
-.dc-chat-list li button:first-child { flex: 1; min-width: 0; text-align: left; border: 0; background: transparent; border-radius: 6px; padding: 4px 6px; font: inherit; cursor: pointer; }
-.dc-chat-list li button:first-child[aria-current="true"] { background: var(--hover); }
-.dc-chat-list li button:last-child { border: 0; background: transparent; color: var(--text-3); font: inherit; font-size: 12px; cursor: pointer; }
+.dc-chat-list li { display: flex; align-items: center; gap: 4px; min-height: 36px; }
+.dc-chat-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; border: 0; background: transparent; border-radius: 6px; padding: 6px 8px; font: inherit; cursor: pointer; }
+.dc-chat-title[aria-current="true"] { background: var(--hover); font-weight: 600; }
+.dc-chat-menu { position: relative; flex: none; }
+.dc-chat-menu > button { width: 32px; height: 32px; border: 0; background: transparent; border-radius: 6px; cursor: pointer; }
+.dc-chat-menu > button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.dc-chat-menu [role="menu"] { position: absolute; z-index: 6; right: 0; top: 100%; min-width: 140px; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: #fff; box-shadow: var(--shadow-btn); display: grid; }
+.dc-chat-menu [role="menuitem"] { border: 0; background: transparent; text-align: left; padding: 8px 10px; font: inherit; cursor: pointer; }
+.dc-rename { display: grid; gap: 4px; width: 100%; }
 .dc-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 16px; border-bottom: 1px solid var(--line); font-size: var(--fs-sm); color: var(--text-2); }
 .dc-pill { display: inline-flex; align-items: center; gap: 6px; }
 .dc-pill code { font-size: var(--fs-sm); }
@@ -64,7 +70,7 @@
 .dc-suggest ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .dc-suggest li { display: flex; align-items: flex-start; gap: 8px; }
 .dc-suggest li > input[type="checkbox"] { margin-top: 5px; }
-.dc-fact { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.dc-fact { flex: 1; min-width: 0; display: grid; gap: 2px; overflow-wrap: anywhere; }
 .dc-fact-input { width: 100%; border: 1px solid transparent; border-radius: 6px; padding: 2px 6px; margin-left: -6px; font: inherit; background: transparent; color: var(--text); }
 .dc-fact-input:hover, .dc-fact-input:focus { border-color: var(--line-2); outline: none; }
 .dc-fact-state { display: inline-flex; align-items: center; gap: 4px; flex: none; font-size: var(--fs-sm); color: var(--text-2); }
@@ -93,5 +99,6 @@
   .dc-user { max-width: 100%; }
   .dc-intro { padding-top: 0; }
   .dc-body { flex-direction: column; }
-  .dc-history { width: auto; max-height: 160px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .dc-history { width: auto; max-height: 220px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .dc-history.is-collapsed { display: none; }
 }
