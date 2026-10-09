@@ -332,7 +332,7 @@ describe("ChatPage (mocked backend)", () => {
     renderChat();
     await send("We have two engineers.");
     const section = await screen.findByRole("region", { name: "Suggested memories" });
-    fireEvent.click(within(section).getByRole("button", { name: "Save selected" }));
+    fireEvent.click(within(section).getByRole("button", { name: /Save selected/ }));
     expect(await within(section).findByText("Saving")).toBeInTheDocument();
     expect(within(section).queryByText("Saved")).not.toBeInTheDocument();
     expect(await within(section).findByText("Saved", {}, { timeout: 6000 })).toBeInTheDocument();
@@ -359,7 +359,7 @@ describe("ChatPage (mocked backend)", () => {
     renderChat();
     await send("Onboarding is the focus.");
     const section = await screen.findByRole("region", { name: "Suggested memories" });
-    fireEvent.click(within(section).getByRole("button", { name: "Save selected" }));
+    fireEvent.click(within(section).getByRole("button", { name: /Save selected/ }));
     expect(await within(section).findByText("Failed")).toBeInTheDocument();
     expect(within(section).queryByText("Saved")).not.toBeInTheDocument();
     expect(within(section).getByRole("button", { name: "Retry selected" })).toBeEnabled();
@@ -432,7 +432,7 @@ describe("ChatPage composer, history and extraction states (mocked backend)", ()
     const section = await screen.findByRole("region", { name: "Suggested memories" });
     await waitFor(() => expect(screen.getByTestId("history-status")).toHaveTextContent("Chat history: Saved"));
     expect(screen.queryByTestId("memory-writes")).not.toBeInTheDocument();
-    fireEvent.click(within(section).getByRole("button", { name: "Save selected" }));
+    fireEvent.click(within(section).getByRole("button", { name: /Save selected/ }));
     await waitFor(() => expect(screen.getByTestId("memory-writes")).toHaveTextContent("1 pending"));
     // Accepted by the relayer is pending, not stored; history stays its own label.
     expect(screen.getByTestId("memory-writes")).not.toHaveTextContent(/stored/);

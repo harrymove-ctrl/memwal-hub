@@ -1217,8 +1217,8 @@ function Suggestions({ items, onToggle, onEdit, onSave }: SuggestionsProps) {
         ))}
       </ul>
       <div className="dc-row">
-        <button type="button" className="btn btn-primary" disabled={!savable.length} onClick={onSave}>{retrying ? "Retry selected" : "Save selected"}</button>
-        <span className="hint">Saved only after Walrus confirms storage. Keys, passwords and temporary instructions are never saved.</span>
+        <button type="button" className="btn btn-primary" disabled={!savable.length} onClick={onSave}>{retrying ? "Retry selected" : `Save selected to project Memory${savable.length ? ` (${savable.length})` : ""}`}</button>
+        <span className="hint">{savable.length} selected. Saving writes those facts to this project's Walrus Memory. Nothing is saved until you press the button, and only after Walrus confirms storage.</span>
       </div>
     </section>
   );

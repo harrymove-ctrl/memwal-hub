@@ -133,7 +133,7 @@ async function ask(page, text, label) {
 async function saveAll(page, label) {
   const region = lastAssistant(page).getByRole("region", { name: "Suggested memories" });
   if (!(await region.count())) return [];
-  await region.getByRole("button", { name: "Save selected" }).click();
+  await region.getByRole("button", { name: /Save selected/ }).click();
   await shot(page, `${label}-saving`);
   await page.waitForFunction(() => {
     const regions = document.querySelectorAll('section[aria-label="Suggested memories"]');
