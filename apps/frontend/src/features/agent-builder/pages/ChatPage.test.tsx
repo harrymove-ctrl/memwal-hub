@@ -143,10 +143,10 @@ describe("ChatPage (mocked backend)", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: /1 saved memory provided as context/ }));
-    expect(screen.getByText(fact.text)).toBeInTheDocument();
+    expect(screen.getAllByText(fact.text)).toHaveLength(2);
     expect(screen.queryByText(/Walrus blob blob-1/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Details/ }));
-    expect(screen.getByText(/blob-1/)).toBeInTheDocument();
+    expect(screen.getAllByText(/blob-1/).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("example-model-2026")).toBeInTheDocument();
     await screen.findByText(/No durable facts/);
 

@@ -28,6 +28,8 @@ import { memoryBadge } from "../services/wallet-recall";
 import { useMemorySession, useModelProxyStatus, useProxyModels, useRefreshIntegrations } from "../state/integration-queries";
 import "./pages.css";
 import "./chat.css";
+import { DiscoveryRail } from "./DiscoveryRail";
+import type { TimelineInput } from "./discovery-panels";
 
 type Phase = "idle" | "recalling" | "generating";
 type FactState = "suggested" | "saving" | "saved" | "failed" | "uncertain";
@@ -130,6 +132,22 @@ function mayRemember(turn: AssistantTurn): boolean {
   return !tools || tools.includes("memwal_remember");
 }
 
+function recalledFor(turns: Turn[]) {
+  const latest = [...turns].reverse().find((turn) => turn.role === "assistant");
+  return latest?.memory?.state === "included" ? latest.memory.facts : [];
+}
+
+function timelineFor(turns: Turn[], projectId: string): TimelineInput {
+  const latest = [...turns].reverse().find((turn) => turn.role === "assistant");
+  return {
+    projectId,
+    replyStatus: latest?.status,
+    memory: latest?.memory,
+    extraction: latest?.extraction?.state,
+    suggestionStates: latest?.suggestions?.map((item) => item.state),
+  };
+}
+
 /** Workspace chat. Product discovery is one use; the same thread can cover other work. */
 export function ChatPage({ ctx }: { ctx: ShellCtx }) {
   const [params, setParams] = useSearchParams();
@@ -177,6 +195,15 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
   const [projectName, setProjectName] = useState("");
   const [draftChoice, setDraftChoice] = useState(false);
   const [chatsOpen, setChatsOpen] = useState(true);
+  const [present, setPresent] = useState(false);
+  useEffect(() => {
+    if (!present) return;
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") setPresent(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [present]);
   const [loadedAgent, setAgentInfo] = useState<{ key: string; name: string; revision: number } | null>(null);
   // Only the agent named in the URL counts; a stale row from a previous agent is ignored.
   const agentInfo = loadedAgent && loadedAgent.key === agentKey ? loadedAgent : null;
@@ -721,6 +748,7 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
         </div>
         <div className="actions">
           <button type="button" className="btn" aria-expanded={chatsOpen} onClick={() => setChatsOpen((open) => !open)}>{chatsOpen ? "Hide chats" : "Show chats"}</button>
+          <button type="button" className="btn" aria-pressed={present} onClick={() => setPresent((value) => !value)}>{present ? "Exit presentation" : "Presentation"}</button>
           <button type="button" className="btn" disabled={creating || (turns.length === 0 && !draft && !projectId)} onClick={() => newChat()} title={pendingWrites ? "Saves already sent keep running on Walrus" : undefined}><Plus size={12} /> New chat</button>
           {draftChoice ? (
             <span className="dc-row">
@@ -731,7 +759,7 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
           ) : null}
         </div>
       </header>
-      <div className="dc">
+      <div className={present ? "dc is-present" : "dc"}>
         <div className="dc-status" aria-label="Connection status">
           <span className="dc-pill" data-tone={proxyState.tone}>
             <span className="dc-dot" aria-hidden /> ZRouter: {proxy.error ? "Unavailable" : proxyState.label}
@@ -775,6 +803,12 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
             onMore={loadMoreChats}
             onRetry={retryHistory}
             collapsed={!chatsOpen}
+          />
+          <DiscoveryRail
+            projectId={projectId}
+            projectName={projects?.find((project) => project.id === projectId)?.name ?? ""}
+            timeline={timelineFor(turns, projectId)}
+            recalled={recalledFor(turns)}
           />
           <div className="dc-main">
         <div className="dc-scroll" ref={scroller} onScroll={onScroll}>

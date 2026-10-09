@@ -15,6 +15,21 @@
 .dc-chat-menu [role="menu"] { position: absolute; z-index: 6; right: 0; top: 100%; min-width: 140px; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: #fff; box-shadow: var(--shadow-btn); display: grid; }
 .dc-chat-menu [role="menuitem"] { border: 0; background: transparent; text-align: left; padding: 8px 10px; font: inherit; cursor: pointer; }
 .dc-rename { display: grid; gap: 4px; width: 100%; }
+.dc-discovery { width: 280px; flex: none; overflow: auto; border-left: 1px solid var(--line); padding: 12px; display: grid; align-content: start; gap: 16px; }
+.dc-discovery h2 { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
+.dc-discovery p, .dc-discovery li { margin: 0; font-size: 13px; line-height: 18px; }
+.dc-discovery ul, .dc-discovery ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.dc-stages li { display: grid; gap: 2px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.dc-stages li span { color: var(--text-3); text-transform: capitalize; }
+.dc-discovery small { color: var(--text-3); overflow-wrap: anywhere; }
+.dc.is-present .dc-history { display: none; }
+.dc.is-present .dc-col { width: min(840px, 100% - 32px); font-size: 16px; }
+@media (max-width: 1100px) {
+  .dc-discovery { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dc-stages li { transition: none; }
+}
 .dc-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 16px; border-bottom: 1px solid var(--line); font-size: var(--fs-sm); color: var(--text-2); }
 .dc-pill { display: inline-flex; align-items: center; gap: 6px; }
 .dc-pill code { font-size: var(--fs-sm); }
