@@ -10,9 +10,9 @@ export const API = "http://localhost:8080";
 
 export const ctx: ShellCtx = { notify: vi.fn(), openSidebar: vi.fn(), showOpener: false, sidebarOpen: true };
 
-export function renderWithClient(node: ReactNode) {
+export function renderWithClient(node: ReactNode, initialEntries: string[] = ["/"]) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return { client, ...render(<QueryClientProvider client={client}><MemoryRouter>{node}</MemoryRouter></QueryClientProvider>) };
+  return { client, ...render(<QueryClientProvider client={client}><MemoryRouter initialEntries={initialEntries}>{node}</MemoryRouter></QueryClientProvider>) };
 }
 
 export function json(body: unknown, status = 200) {

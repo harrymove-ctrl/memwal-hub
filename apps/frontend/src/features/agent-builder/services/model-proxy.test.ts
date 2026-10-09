@@ -69,7 +69,7 @@ describe("parseConfigSnippet", () => {
 describe("proxyBadge", () => {
   it("never reports Ready for an untested save", () => {
     expect(proxyBadge(undefined, false).label).toBe("Not configured");
-    expect(proxyBadge({ status: "untested" } as never, false).label).toBe("Needs attention");
+    expect(proxyBadge({ status: "untested" } as never, false).label).toBe("Not tested");
     expect(proxyBadge({ status: "ready" } as never, true).label).toBe("Testing");
     expect(proxyBadge({ status: "ready" } as never, false).label).toBe("Ready");
     expect(proxyBadge({ status: "unavailable" } as never, false).label).toBe("Unavailable");

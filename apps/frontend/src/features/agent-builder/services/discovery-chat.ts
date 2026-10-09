@@ -14,8 +14,8 @@ export interface RecalledFact {
 
 export type MemoryEvent =
   | { state: "recalling" }
-  | { state: "included" | "none"; facts: RecalledFact[]; filtered_out: number; policy: string; query_characters: number }
-  | { state: "off" }
+  | { state: "included" | "none"; facts: RecalledFact[]; filtered_out?: number; candidates?: number; policy: string; query_characters?: number; namespace?: string; reason?: string; includes_previous_user_message?: boolean }
+  | { state: "off"; reason?: string }
   | { state: "unavailable" | "failed"; code: string; message: string };
 
 export interface RequestShape {
@@ -24,6 +24,29 @@ export interface RequestShape {
   memory_context_included: boolean;
   memory_facts_included: number;
   conversation_messages: number;
+  project_id?: string;
+  /** The saved agent revision this run resolved at its start. */
+  agent?: { key: string; revision: number; name: string; tools?: string[] };
+}
+
+/** Server-resolved Memory scope. Memory is never used without a project. */
+export interface MemoryScope {
+  projectId: string;
+  conversationId?: string;
+}
+
+/** The agent revision a turn ran with; its capabilities apply to saves. */
+export interface AgentRef {
+  key: string;
+  revision?: number;
+}
+
+function scopeBody(scope: MemoryScope, agent?: AgentRef) {
+  return {
+    project_id: scope.projectId,
+    ...(scope.conversationId ? { conversation_id: scope.conversationId } : {}),
+    ...(agent ? { agent_key: agent.key, ...(agent.revision ? { agent_revision: agent.revision } : {}) } : {}),
+  };
 }
 
 export interface DoneEvent {
@@ -79,6 +102,11 @@ export interface StreamChatOptions {
   /** Per-conversation model ID; the saved connection's model when omitted. */
   model?: string;
   projectId?: string;
+  /** Saved conversation and the request id of its already-saved user message. */
+  conversationId?: string;
+  requestId?: string;
+  agentKey?: string;
+  agentRevision?: number;
   signal: AbortSignal;
   onEvent: (event: ChatStreamEvent) => void;
 }
@@ -88,10 +116,18 @@ export interface StreamChatOptions {
  * the backend then drops the upstream proxy request. Events that arrive after
  * an abort are discarded.
  */
-export async function streamChat({ messages, useMemory, model, projectId, signal, onEvent }: StreamChatOptions): Promise<void> {
+export async function streamChat({ messages, useMemory, model, projectId, conversationId, requestId, agentKey, agentRevision, signal, onEvent }: StreamChatOptions): Promise<void> {
   const response = await apiFetch("/discovery/chat", {
     method: "POST",
-    body: JSON.stringify({ messages, use_memory: useMemory, ...(model ? { model } : {}), ...(projectId ? { project_id: projectId } : {}) }),
+    body: JSON.stringify({
+      messages,
+      use_memory: useMemory,
+      ...(model ? { model } : {}),
+      ...(projectId ? { project_id: projectId } : {}),
+      ...(conversationId && requestId ? { conversation_id: conversationId, request_id: requestId } : {}),
+      ...(agentKey ? { agent_key: agentKey } : {}),
+      ...(agentKey && agentRevision ? { agent_revision: agentRevision } : {}),
+    }),
     signal,
   });
   if (!response.ok || !response.body) {
@@ -122,10 +158,25 @@ export interface SuggestedFact {
   category: string;
 }
 
-export function suggestFacts(userMessage: string, assistantMessage: string) {
-  return requestJson<{ facts: SuggestedFact[]; rejected: number; model_reported: string | null }>("/discovery/suggest", {
+export interface SuggestResult {
+  facts: SuggestedFact[];
+  rejected: number;
+  model_reported: string | null;
+  finish_reason?: string | null;
+  attempts?: number;
+}
+
+/**
+ * Asks the configured model for durable facts in one user message. It never
+ * saves anything. A truncated, malformed or failed extraction rejects with a
+ * BuilderApiError (`extraction_truncated`, `extraction_invalid`, a provider
+ * code); only a well-formed empty answer resolves with no facts.
+ */
+export function suggestFacts(userMessage: string, assistantMessage: string, scope: MemoryScope, agent?: AgentRef, signal?: AbortSignal) {
+  return requestJson<SuggestResult>("/discovery/suggest", {
     method: "POST",
-    body: JSON.stringify({ user_message: userMessage, assistant_message: assistantMessage }),
+    body: JSON.stringify({ user_message: userMessage, assistant_message: assistantMessage, ...scopeBody(scope, agent) }),
+    signal,
   });
 }
 
@@ -138,12 +189,12 @@ export interface FactJob {
   message: string | null;
 }
 
-export function saveFacts(facts: { client_id: string; text: string }[], projectId?: string) {
-  return requestJson<{ jobs: FactJob[] }>("/discovery/memories", { method: "POST", body: JSON.stringify({ facts, ...(projectId ? { project_id: projectId } : {}) }) });
+export function saveFacts(facts: { client_id: string; text: string }[], scope: MemoryScope, agent?: AgentRef) {
+  return requestJson<{ jobs: FactJob[] }>("/discovery/memories", { method: "POST", body: JSON.stringify({ facts, ...scopeBody(scope, agent) }) });
 }
 
-export function factStatus(clientIds: string[]) {
-  return requestJson<{ jobs: FactJob[] }>("/discovery/memories/status", { method: "POST", body: JSON.stringify({ client_ids: clientIds }) });
+export function factStatus(clientIds: string[], scope: MemoryScope) {
+  return requestJson<{ jobs: FactJob[] }>("/discovery/memories/status", { method: "POST", body: JSON.stringify({ client_ids: clientIds, ...scopeBody(scope) }) });
 }
 
 const CHAT_ERRORS: Record<string, string> = {
@@ -156,6 +207,10 @@ const CHAT_ERRORS: Record<string, string> = {
   model_not_ready: "Test the ZRouter connection until it shows Ready.",
   model_not_configured: "Configure ZRouter in Integrations first.",
   memory_unavailable: "Walrus Memory is unavailable, so nothing was recalled.",
+  project_required: "Choose a project first. Memory is scoped to a project, so nothing was read or written.",
+  scope_mismatch: "That chat belongs to a different project. Nothing was read or written.",
+  agent_not_found: "That agent or revision was not found, so nothing was run.",
+  capability_disabled: "This agent revision does not allow that Memory operation.",
   unauthorized: "Sign in to the workspace first.",
   backend_unavailable: "The workspace backend is unavailable.",
 };

@@ -67,9 +67,10 @@ export function useRefreshIntegrations() {
 }
 
 /** Model IDs exactly as the proxy's /models endpoint returns them (no billable call). */
-export function useProxyModels(enabled: boolean) {
+export function useProxyModels(enabled: boolean, baseUrl: string | null | undefined) {
   return useQuery({
-    queryKey: [...integrationKeys.modelProxy, "models"],
+    // The list belongs to one saved base URL; a different URL must never reuse it.
+    queryKey: [...integrationKeys.modelProxy, "models", baseUrl ?? null],
     queryFn: () => modelProxyService.models(),
     enabled,
     staleTime: 5 * 60_000,

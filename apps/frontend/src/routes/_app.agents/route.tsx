@@ -1,7 +1,8 @@
 import { useCallback, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, Download, KeyRound, MoreHorizontal } from "lucide-react";
-import { useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router";
+import { setStoredReturnPath } from "@/utils/utils.return-path";
 
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -236,7 +237,13 @@ export default function AgentsRoute() {
           </div>
 
           <Flex className="flex-wrap items-center gap-2">
-            <a className="inline-flex h-10 items-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground" href="/builder/integrations">Connect model</a>
+            <Link
+              className="inline-flex h-10 items-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground"
+              to="/builder/integrations?connect=model"
+              onClick={() => setStoredReturnPath("/builder/integrations?connect=model")}
+            >
+              Connect model
+            </Link>
             <AgentsConnectDialog
               onConnected={() =>
                 void queryClient.invalidateQueries({

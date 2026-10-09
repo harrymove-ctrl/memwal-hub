@@ -5,6 +5,7 @@ import authService, {
   type LoginCredentials,
   type RegisterCredentials,
 } from "@/services/auth";
+import { clearStoredReturnPath, resolveReturnPath } from "@/utils/utils.return-path";
 
 import WorkspaceShellAuthDialog, {
   type WorkspaceShellAuthMode,
@@ -53,12 +54,22 @@ export default function WorkspaceShellSession({
     setUser(authenticatedUser);
     setStatus("authenticated");
     setAuthOpen(false);
+    const target = resolveReturnPath();
+    if (target) {
+      clearStoredReturnPath();
+      window.location.assign(target);
+    }
   }
 
   function authenticateWallet(authenticatedUser: AuthenticatedUser) {
     setUser(authenticatedUser);
     setStatus("authenticated");
     setAuthOpen(false);
+    const target = resolveReturnPath();
+    if (target) {
+      clearStoredReturnPath();
+      window.location.assign(target);
+    }
   }
 
   async function signOut() {

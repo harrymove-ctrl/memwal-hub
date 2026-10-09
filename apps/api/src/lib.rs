@@ -1,5 +1,6 @@
 mod agent_auth;
 mod agent_pools;
+mod agents;
 mod auth;
 mod config;
 mod connections;
@@ -187,8 +188,6 @@ pub fn app(state: AppState) -> Router {
         .route("/auth/logout", post(logout))
         .route("/memory/session", get(memory::session))
         .route("/memory/walrus", post(memory::save).delete(memory::clear))
-        .route("/memory/recall", post(memory::recall))
-        .route("/memory/remember", post(memory::remember))
         .route("/memory/console/report", post(memory::console_report))
         .route("/memory/stats", get(memory::stats))
         .route(
@@ -198,12 +197,18 @@ pub fn app(state: AppState) -> Router {
                 .delete(model_proxy::disconnect),
         )
         .route("/model-proxy/test", post(model_proxy::test))
-        .route("/model-proxy/models", get(model_proxy::models))
+        .route(
+            "/model-proxy/models",
+            get(model_proxy::models).post(model_proxy::discover_models),
+        )
         .route("/discovery/chat", post(discovery::chat))
         .route("/discovery/suggest", post(discovery::suggest))
         .route("/discovery/memories", post(discovery::save_facts))
         .route("/discovery/memories/status", post(discovery::fact_status))
-        .route("/projects", get(conversations::list_projects).post(conversations::create_project))
+        .route(
+            "/projects",
+            get(conversations::list_projects).post(conversations::create_project),
+        )
         .route(
             "/projects/{id}/conversations",
             get(conversations::list_conversations).post(conversations::create_conversation),
@@ -212,8 +217,16 @@ pub fn app(state: AppState) -> Router {
             "/conversations/{id}",
             get(conversations::get_conversation).post(conversations::update_conversation),
         )
-        .route("/conversations/{id}/messages", post(conversations::append_user))
-        .route("/conversations/{id}/replies", post(conversations::append_reply))
+        .route(
+            "/conversations/{id}/messages",
+            post(conversations::append_user),
+        )
+        .route(
+            "/conversations/{id}/replies",
+            post(conversations::append_reply),
+        )
+        .route("/builder-agents", post(agents::save_revision))
+        .route("/builder-agents/{agent_key}", get(agents::get_revision))
         .route("/auth/refresh", post(refresh))
         .route("/auth/wallet/nonce", post(wallet_nonce))
         .route("/auth/wallet/login", post(wallet_login))

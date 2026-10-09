@@ -1,6 +1,7 @@
 import { Dialog } from "radix-ui";
 import { useEffect, useState } from "react";
 import type { AgentConfig, SectionId } from "../domain/types";
+import { memoryCapabilities } from "../domain/capabilities";
 import { describeCron, isValidTimezone, validateCron } from "../domain/schedule";
 
 interface Props {
@@ -15,9 +16,34 @@ const TITLES: Record<SectionId, string> = {
   schedule: "Schedule", triggers: "Start", channels: "Channels", memory: "Memory", files: "Research files", agent: "Agent",
   instructions: "Instructions", tools: "Tools", review: "Review findings", save: "Save results", subAgents: "Sub-agents", skills: "Skills",
 };
-
 const lines = (s: string) => s.split("\n").map((x) => x.trim()).filter(Boolean);
 
+export const ALLOWED_MEMORY_TOOLS = [
+  {
+    id: "memwal_recall",
+    technical: "memwal_recall",
+    name: "Recall project memories",
+    app: "memory",
+    group: "read" as const,
+    detail: "Search relevant facts, decisions, and context from Walrus memory.",
+  },
+  {
+    id: "memwal_remember",
+    technical: "memwal_remember",
+    name: "Remember project memories",
+    app: "memory",
+    group: "save" as const,
+    detail: "Save user-approved facts and decisions to durable Walrus memory.",
+  },
+] as const;
+
+const READ_ONLY_SECTIONS: Partial<Record<SectionId, true>> = {
+  files: true,
+  review: true,
+  save: true,
+  subAgents: true,
+  skills: true,
+};
 export function SectionEditor({ section, config, onClose, onApply }: Props) {
   return (
     <Dialog.Root open={section !== null} onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -45,19 +71,24 @@ function EditorBody({ section, config, onClose, onApply }: { section: SectionId;
     identity: config.identity ?? "",
     channels: config.channels.join("\n"),
     memory: config.memory.map((m) => m.name).join("\n"),
-    tools: config.tools.map((t) => t.name).join("\n"),
-    subAgents: config.subAgents.join("\n"),
-    skills: config.skills.join("\n"),
   }));
+  const [enabledTools, setEnabledTools] = useState<Set<string>>(() => new Set(memoryCapabilities(config.tools)));
   const [touched, setTouched] = useState(false);
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((x) => ({ ...x, [k]: v }));
 
   const errors: Partial<Record<keyof typeof f, string>> = {};
   if (section === "agent") {
-    if (!f.name.trim()) errors.name = "Name is required.";
-    if (f.name.length > 60) errors.name = "Keep the name under 60 characters.";
+    const trimmed = f.name.trim();
+    if (!trimmed || trimmed.length < 1 || trimmed.length > 80) {
+      errors.name = "Use an agent name between 1 and 80 characters.";
+    }
   }
-  if (section === "instructions" && f.instructions.trim().length < 10) errors.instructions = "Instructions need at least 10 characters.";
+  if (section === "instructions") {
+    const trimmed = f.instructions.trim();
+    if (!trimmed || trimmed.length < 1 || trimmed.length > 4000) {
+      errors.instructions = "Instructions must be between 1 and 4000 characters.";
+    }
+  }
   if (section === "schedule" && f.scheduleOn) {
     const c = validateCron(f.cron);
     if (c) errors.cron = c;
@@ -78,9 +109,22 @@ function EditorBody({ section, config, onClose, onApply }: { section: SectionId;
       case "triggers": patch.triggers = lines(f.triggers).map((l, i) => { const [name, filter] = l.split("|").map((x) => x.trim()); return { id: `t${i + 1}`, app: config.triggers[i]?.app ?? "zendesk", name, filter }; }); break;
       case "channels": patch.identity = f.identity.trim() || null; patch.channels = lines(f.channels); break;
       case "memory": patch.memory = lines(f.memory).map((name, i) => ({ id: `m${i + 1}`, name })); break;
-      case "tools": patch.tools = lines(f.tools).map((name, i) => ({ id: config.tools[i]?.id ?? `tool${i}`, name, app: config.tools.find((t) => t.name === name)?.app ?? "x" })); break;
-      case "subAgents": patch.subAgents = lines(f.subAgents); break;
-      case "skills": patch.skills = lines(f.skills); break;
+      case "tools": {
+        patch.tools = ALLOWED_MEMORY_TOOLS
+          .filter((t) => enabledTools.has(t.technical))
+          .map((t) => ({
+            id: t.id,
+            name: t.name,
+            app: t.app,
+            technical: t.technical,
+            group: t.group,
+            detail: t.detail,
+          }));
+        break;
+      }
+      case "subAgents":
+      case "skills":
+        break;
     }
     onApply(patch);
     onClose();
@@ -88,7 +132,7 @@ function EditorBody({ section, config, onClose, onApply }: { section: SectionId;
 
   const err = (k: keyof typeof f) => (touched && errors[k] ? <span className="error" id={`err-${k}`}>{errors[k]}</span> : null);
   const inv = (k: keyof typeof f) => ({ "aria-invalid": touched && !!errors[k], "aria-describedby": errors[k] ? `err-${k}` : undefined });
-  const list = (k: "triggers" | "channels" | "memory" | "tools" | "subAgents" | "skills", label: string, hint: string) => (
+  const list = (k: "triggers" | "channels" | "memory", label: string, hint: string) => (
     <div className="field">
       <label htmlFor={`f-${k}`}>{label}</label>
       <textarea id={`f-${k}`} className="textarea" style={{ minHeight: 120 }} value={f[k]} onChange={(e) => set(k, e.target.value)} {...inv(k)} />
@@ -101,7 +145,7 @@ function EditorBody({ section, config, onClose, onApply }: { section: SectionId;
     <form onSubmit={(e) => { e.preventDefault(); apply(); }}>
       <Dialog.Title style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 500 }}>Edit {TITLES[section]}</Dialog.Title>
       <Dialog.Description id="ed-desc" className="hint" style={{ margin: "0 0 16px" }}>
-        Changes apply to this agent's draft. Use Save agent to keep them (stored locally in this browser — demo mode).
+        Changes apply to this agent's draft. Save agent stores a revision on the server. A failed save keeps the draft.
       </Dialog.Description>
 
       {section === "agent" ? (
@@ -137,13 +181,55 @@ function EditorBody({ section, config, onClose, onApply }: { section: SectionId;
         </>
       ) : null}
       {section === "memory" ? list("memory", "Memory", "One example scope per line. This does not create a namespace.") : null}
-      {section === "files" ? <p className="hint">These are sample file names. No folder is connected, and nothing is uploaded from this editor.</p> : null}
-      {section === "tools" ? list("tools", "Tools", "One tool per line. This does not connect Walrus.") : null}
-      {section === "skills" ? list("skills", "Skills", "One skill per line.") : null}
+      {section === "files" ? <p className="hint">These are sample file names. No folder is connected, and nothing is uploaded from this editor. Console file tools are not available.</p> : null}
+      {section === "review" ? <p className="hint">Review findings is illustrative in this demo. Memory review occurs in Chat before facts are stored.</p> : null}
+      {section === "save" ? <p className="hint">Save results is illustrative in this demo. Real memory storage occurs via Walrus relayer jobs in Chat.</p> : null}
+      {section === "subAgents" ? <p className="hint">Sub-agents are unavailable in this demo. You can coordinate multiple steps directly in Chat.</p> : null}
+      {section === "skills" ? <p className="hint">Skills catalogue is illustrative in this demo. Use built-in memory capabilities.</p> : null}
+      {section === "tools" ? (
+        <div className="field">
+          <label style={{ display: "block", marginBottom: 8 }}>Capabilities</label>
+          <p className="hint" style={{ margin: "0 0 12px" }}>
+            Allowlisted memory tools. Disabled tools are excluded from agent runs.
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {ALLOWED_MEMORY_TOOLS.map((tool) => {
+              const checked = enabledTools.has(tool.technical);
+              return (
+                <label key={tool.technical} style={{ display: "flex", gap: 8, alignItems: "flex-start", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(e) => {
+                      setEnabledTools((curr) => {
+                        const next = new Set(curr);
+                        if (e.target.checked) next.add(tool.technical);
+                        else next.delete(tool.technical);
+                        return next;
+                      });
+                    }}
+                  />
+                  <div>
+                    <strong>{tool.name}</strong>
+                    <div className="hint">{tool.detail}</div>
+                    <div className="hint" style={{ fontFamily: "monospace", fontSize: 11 }}>{tool.technical}</div>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
 
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
-        <Dialog.Close asChild><button type="button" className="btn">Cancel</button></Dialog.Close>
-        <button type="submit" className="btn btn-primary" disabled={touched && !valid}>Apply</button>
+        {READ_ONLY_SECTIONS[section] ? (
+          <Dialog.Close asChild><button type="button" className="btn btn-primary">Close</button></Dialog.Close>
+        ) : (
+          <>
+            <Dialog.Close asChild><button type="button" className="btn">Cancel</button></Dialog.Close>
+            <button type="submit" className="btn btn-primary" disabled={touched && !valid}>Apply</button>
+          </>
+        )}
       </div>
       <FocusFirst />
     </form>

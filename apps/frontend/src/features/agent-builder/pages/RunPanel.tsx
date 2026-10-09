@@ -16,14 +16,40 @@ interface Props {
   onSend: (text: string) => void;
   demo: boolean;
   discovery?: boolean;
+  agentName?: string;
+  chatTo?: string;
   onNotify: (message: string) => void;
+  onPreviewExample?: () => void;
+  onOpenChat?: () => void;
+  previewTrigger?: number;
+  savedNotice?: string | null;
 }
 
 const NEAR_BOTTOM_PX = 48;
 const SUGGESTED_PROMPT = "Review this week’s MemWal feedback and identify the strongest product opportunities.";
 
-export function RunPanel({ run, busy, onStop, onSend, discovery, onNotify }: Props) {
+export function RunPanel({
+  run,
+  busy,
+  onStop,
+  onSend,
+  discovery,
+  onNotify,
+  agentName,
+  chatTo,
+  onPreviewExample,
+  onOpenChat,
+  previewTrigger,
+  savedNotice,
+}: Props) {
   const [stage, setStage] = useState<DiscoveryStage | "idle" | "reading" | "analyzing">("idle");
+  // A new preview request moves the panel to the file step. Adjusting state while rendering
+  // (React's documented pattern) replaces the previous effect that set state after the fact.
+  const [seenTrigger, setSeenTrigger] = useState(previewTrigger ?? 0);
+  if ((previewTrigger ?? 0) !== seenTrigger) {
+    setSeenTrigger(previewTrigger ?? 0);
+    if (previewTrigger && previewTrigger > 0) setStage("files");
+  }
   const playback = useRef<number[]>([]);
   const memory = useMemorySession();
   const memoryReady = memory.data?.walrus.status === "verified";
@@ -66,8 +92,12 @@ export function RunPanel({ run, busy, onStop, onSend, discovery, onNotify }: Pro
     if (!canSend || sending.current) return;
     if (discovery) {
       setText("");
-      if (stage === "idle") setStage("files");
-      onNotify("Example run. This message was not sent to Memory, Console, or a live model.");
+      if (onPreviewExample) {
+        onPreviewExample();
+      } else {
+        if (stage === "idle") setStage("files");
+        onNotify("Example run. This message was not sent to Memory, Console, or a live model.");
+      }
       return;
     }
     sending.current = true;
@@ -89,20 +119,74 @@ export function RunPanel({ run, busy, onStop, onSend, discovery, onNotify }: Pro
   return (
     <aside className="run" aria-label="Run">
       <div className="run-card">
-        <p><span className="chip"><Zap size={11} /> product-discovery-agent</span> <span>Past 7 days</span></p>
+        <p>
+          <span className="chip"><Zap size={11} /> {agentName || "Agent"}</span>{" "}
+          {run.revision != null ? (
+            <span className="chip rev-chip" data-testid="run-revision-chip">
+              Revision {run.revision}
+            </span>
+          ) : null}
+          {discovery ? <span>Example</span> : null}
+        </p>
         {busy ? (
           <button className="run-stop" aria-label="Stop run" onClick={onStop}><Square size={10} /> Stop</button>
         ) : discovery && stage === "idle" ? (
           <div className="run-actions">
             <button type="button" className="btn btn-primary" onClick={() => { onNotify(memoryReady ? "Memory is ready. Console file upload is still unavailable." : "Memory is not connected. A live run cannot read files until you connect sources."); window.dispatchEvent(new Event("bew:open-settings")); }}>{memoryReady ? "Memory ready" : "Connect sources"}</button>
-            <NavLink className="btn" to="/builder/chat">Try Product Discovery</NavLink>
-            <button type="button" className="btn" onClick={() => setStage("files")}><Play size={12} /> Preview example</button>
+            <NavLink
+              className="btn"
+              to={chatTo || "/builder/chat"}
+              onClick={(e) => {
+                if (onOpenChat) {
+                  e.preventDefault();
+                  onOpenChat();
+                }
+              }}
+            >
+              Open chat
+            </NavLink>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                if (onPreviewExample) {
+                  onPreviewExample();
+                } else {
+                  setStage("files");
+                }
+              }}
+            >
+              <Play size={12} /> Preview example
+            </button>
           </div>
         ) : null}
         {discovery && stage === "idle" ? <p className="run-connect">{memoryReady ? "Memory ready" : "Memory not connected"} · Console not connected{memoryReady ? null : <> · <button type="button" className="link" onClick={() => window.dispatchEvent(new Event("bew:open-settings"))}>Connect</button></>}</p> : null}
       </div>
       <div className="run-scroll" ref={scroller} onScroll={onScroll} aria-live="off">
+        {savedNotice ? (
+          <div
+            className="run-notice"
+            role="status"
+            data-testid="saved-version-notice"
+            style={{
+              padding: "8px 12px",
+              margin: "12px 16px 0",
+              background: "#fef3c7",
+              color: "#92400e",
+              borderRadius: 6,
+              fontSize: 12,
+              fontWeight: 500,
+            }}
+          >
+            {savedNotice}
+          </div>
+        ) : null}
         <div className="run-events">
+          {run.revision != null ? (
+            <p className="run-meta" data-testid="run-details-revision">
+              Run configuration: Revision {run.revision}
+            </p>
+          ) : null}
           {discovery && stage === "idle" && run.status === "idle" ? (
             <>
               <p className="ev-text">Review product feedback using your saved strategy, past opportunities, and selected research files.</p>

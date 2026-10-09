@@ -17,10 +17,7 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::{
-    AppState,
-    auth::optional_authenticated_user_id,
-    memory::json_error,
-    model_proxy::foreign_origin,
+    AppState, auth::optional_authenticated_user_id, memory::json_error, model_proxy::foreign_origin,
 };
 
 const MAX_NAME: usize = 80;
@@ -135,7 +132,10 @@ fn clean_content(value: &str) -> Result<String, &'static str> {
     Ok(content.to_owned())
 }
 
-async fn signed_in(state: &AppState, jar: &axum_extra::extract::CookieJar) -> Result<Uuid, Response> {
+async fn signed_in(
+    state: &AppState,
+    jar: &axum_extra::extract::CookieJar,
+) -> Result<Uuid, Response> {
     match optional_authenticated_user_id(state, jar).await {
         Ok(Some(user_id)) => Ok(user_id),
         Ok(None) => Err(json_error(
@@ -152,7 +152,11 @@ async fn signed_in(state: &AppState, jar: &axum_extra::extract::CookieJar) -> Re
 }
 
 fn not_found() -> Response {
-    json_error(StatusCode::NOT_FOUND, "not_found", "That project or chat was not found.")
+    json_error(
+        StatusCode::NOT_FOUND,
+        "not_found",
+        "That project or chat was not found.",
+    )
 }
 
 pub async fn list_projects(
@@ -192,13 +196,20 @@ pub async fn create_project(
         Ok(user_id) => user_id,
         Err(response) => return response,
     };
-    let name = match clean_label(&body.name, "Use a project name between 1 and 80 characters.") {
+    let name = match clean_label(
+        &body.name,
+        "Use a project name between 1 and 80 characters.",
+    ) {
         Ok(name) => name,
-        Err(message) => return json_error(StatusCode::UNPROCESSABLE_ENTITY, "invalid_project", message),
+        Err(message) => {
+            return json_error(StatusCode::UNPROCESSABLE_ENTITY, "invalid_project", message);
+        }
     };
     let request_id = match clean_request_id(&body.request_id) {
         Ok(id) => id,
-        Err(message) => return json_error(StatusCode::UNPROCESSABLE_ENTITY, "invalid_request", message),
+        Err(message) => {
+            return json_error(StatusCode::UNPROCESSABLE_ENTITY, "invalid_request", message);
+        }
     };
     let id = Uuid::new_v4();
     let namespace = format!("project/{id}");
@@ -233,26 +244,86 @@ pub async fn create_project(
 }
 
 async fn owned_project(state: &AppState, user_id: Uuid, project_id: Uuid) -> Result<(), Response> {
-    match sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM projects WHERE id = $1 AND user_id = $2)")
-        .bind(project_id)
-        .bind(user_id)
-        .fetch_optional(&state.pool)
-        .await
+    match sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM projects WHERE id = $1 AND user_id = $2)",
+    )
+    .bind(project_id)
+    .bind(user_id)
+    .fetch_optional(&state.pool)
+    .await
     {
         Ok(Some(true)) => Ok(()),
         Ok(Some(false) | None) => Err(not_found()),
-        Err(_) => Err(json_error(StatusCode::INTERNAL_SERVER_ERROR, "backend_error", "The project could not be read.")),
+        Err(_) => Err(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "backend_error",
+            "The project could not be read.",
+        )),
     }
 }
-/// Server-owned Walrus scope. `None` means no project was selected.
-/// A project the user does not own is a 404, never the account default namespace.
-pub async fn namespace_for(
+/// The Walrus scope a memory operation is allowed to touch, resolved on the
+/// server from records the caller owns. It is never the account-level
+/// connection namespace: a request with no resolvable project has no scope and
+/// must not reach the Memory adapter at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryScope {
+    pub project_id: Uuid,
+    pub namespace: String,
+    /// Set when the scope was derived from a saved conversation.
+    pub conversation_id: Option<Uuid>,
+}
+
+/// Resolves the project scope for a memory operation.
+///
+/// * a conversation (when given) must belong to the caller; its project is the
+///   scope, and a different `project_id` is a 409 `scope_mismatch`;
+/// * otherwise `project_id` must be a project the caller owns;
+/// * neither given is a 422 `project_required`, never an account-wide scope;
+/// * anything not owned is a 404 with no row contents.
+pub async fn resolve_scope(
     state: &AppState,
     user_id: Uuid,
     project_id: Option<Uuid>,
-) -> Result<Option<String>, Response> {
-    let Some(project_id) = project_id else {
-        return Ok(None);
+    conversation_id: Option<Uuid>,
+) -> Result<MemoryScope, Response> {
+    let derived = match conversation_id {
+        Some(conversation_id) => {
+            match sqlx::query_scalar::<_, Uuid>(
+                "SELECT project_id FROM conversations WHERE id = $1 AND user_id = $2",
+            )
+            .bind(conversation_id)
+            .bind(user_id)
+            .fetch_optional(&state.pool)
+            .await
+            {
+                Ok(Some(owner_project)) => Some(owner_project),
+                Ok(None) => return Err(not_found()),
+                Err(_) => {
+                    return Err(json_error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "backend_error",
+                        "The chat memory scope could not be read.",
+                    ));
+                }
+            }
+        }
+        None => None,
+    };
+    if let (Some(derived), Some(given)) = (derived, project_id)
+        && derived != given
+    {
+        return Err(json_error(
+            StatusCode::CONFLICT,
+            "scope_mismatch",
+            "That chat belongs to a different project. Nothing was read or written.",
+        ));
+    }
+    let Some(project_id) = derived.or(project_id) else {
+        return Err(json_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "project_required",
+            "Choose a project first. Memory is scoped to a project, so nothing was read or written.",
+        ));
     };
     match sqlx::query_scalar::<_, String>(
         "SELECT memory_namespace FROM projects WHERE id = $1 AND user_id = $2",
@@ -262,7 +333,11 @@ pub async fn namespace_for(
     .fetch_optional(&state.pool)
     .await
     {
-        Ok(Some(namespace)) => Ok(Some(namespace)),
+        Ok(Some(namespace)) => Ok(MemoryScope {
+            project_id,
+            namespace,
+            conversation_id,
+        }),
         Ok(None) => Err(not_found()),
         Err(_) => Err(json_error(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -270,6 +345,66 @@ pub async fn namespace_for(
             "The project memory scope could not be read.",
         )),
     }
+}
+
+/// How a second write for the same assistant turn is merged. The browser and
+/// the server can both write a reply (the server keeps a partial reply when
+/// the browser disconnects). A complete reply is never downgraded, and an
+/// unfinished reply only grows: a late, shorter write cannot erase text.
+const MERGE_REPLY: &str = "ON CONFLICT (conversation_id, request_id, role) DO UPDATE
+         SET content = CASE
+                 WHEN conversation_messages.status = 'complete' AND EXCLUDED.status <> 'complete' THEN conversation_messages.content
+                 WHEN EXCLUDED.status = 'complete' THEN EXCLUDED.content
+                 WHEN length(EXCLUDED.content) >= length(conversation_messages.content) THEN EXCLUDED.content
+                 ELSE conversation_messages.content
+             END,
+             status = CASE
+                 WHEN conversation_messages.status = 'complete' THEN 'complete'
+                 ELSE EXCLUDED.status
+             END";
+
+/// Stores the assistant side of a turn from the server, so a reply that was
+/// being generated when the browser disconnected (tab closed, chat switched)
+/// is kept with its own conversation as `interrupted` instead of being lost.
+/// The row is keyed by the same request id as the user turn, so a later
+/// browser `append_reply` for the same turn updates it rather than duplicating.
+pub async fn store_reply(
+    state: &AppState,
+    user_id: Uuid,
+    conversation_id: Uuid,
+    request_id: &str,
+    content: &str,
+    status: &str,
+) -> Result<(), ()> {
+    let content: String = content.trim().chars().take(MAX_CONTENT).collect();
+    let owned = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM conversation_messages m JOIN conversations c ON c.id = m.conversation_id
+         WHERE m.conversation_id = $1 AND c.user_id = $2 AND m.request_id = $3 AND m.role = 'user')",
+    )
+    .bind(conversation_id)
+    .bind(user_id)
+    .bind(request_id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|_| ())?;
+    if !owned {
+        return Err(());
+    }
+    sqlx::query(&format!(
+        "INSERT INTO conversation_messages (id, conversation_id, request_id, role, content, status, sequence)
+         VALUES ($1, $2, $3, 'assistant', $4, $5,
+                 (SELECT COALESCE(MAX(sequence), 0) + 1 FROM conversation_messages WHERE conversation_id = $2))
+         {MERGE_REPLY}"
+    ))
+    .bind(Uuid::new_v4())
+    .bind(conversation_id)
+    .bind(request_id)
+    .bind(&content)
+    .bind(status)
+    .execute(&state.pool)
+    .await
+    .map(|_| ())
+    .map_err(|_| ())
 }
 
 pub async fn list_conversations(
@@ -307,10 +442,16 @@ pub async fn list_conversations(
     .await;
     match rows {
         Ok(conversations) => {
-            let next = conversations.last().map(|row| format!("{}|{}", row.updated_at.to_rfc3339(), row.id));
+            let next = conversations
+                .last()
+                .map(|row| format!("{}|{}", row.updated_at.to_rfc3339(), row.id));
             Json(json!({ "conversations": conversations, "next_cursor": next.filter(|_| conversations.len() as i64 == PAGE) })).into_response()
         }
-        Err(_) => json_error(StatusCode::INTERNAL_SERVER_ERROR, "backend_error", "Chats could not be loaded."),
+        Err(_) => json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "backend_error",
+            "Chats could not be loaded.",
+        ),
     }
 }
 
@@ -338,7 +479,9 @@ pub async fn create_conversation(
     }
     let request_id = match clean_request_id(&body.request_id) {
         Ok(id) => id,
-        Err(message) => return json_error(StatusCode::UNPROCESSABLE_ENTITY, "invalid_request", message),
+        Err(message) => {
+            return json_error(StatusCode::UNPROCESSABLE_ENTITY, "invalid_request", message);
+        }
     };
     let id = Uuid::new_v4();
     let inserted = sqlx::query_as::<_, ConversationRow>(
@@ -365,11 +508,27 @@ pub async fn create_conversation(
         .await
         {
             Ok(Some(chat)) if chat.project_id == project_id => Json(chat).into_response(),
-            Ok(Some(_)) => json_error(StatusCode::CONFLICT, "request_reused", "That request id already belongs to another project."),
-            Ok(None) => json_error(StatusCode::INTERNAL_SERVER_ERROR, "backend_error", "The chat could not be created."),
-            Err(_) => json_error(StatusCode::INTERNAL_SERVER_ERROR, "backend_error", "The chat could not be created."),
+            Ok(Some(_)) => json_error(
+                StatusCode::CONFLICT,
+                "request_reused",
+                "That request id already belongs to another project.",
+            ),
+            Ok(None) => json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "backend_error",
+                "The chat could not be created.",
+            ),
+            Err(_) => json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "backend_error",
+                "The chat could not be created.",
+            ),
         },
-        Err(_) => json_error(StatusCode::INTERNAL_SERVER_ERROR, "backend_error", "The chat could not be created."),
+        Err(_) => json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "backend_error",
+            "The chat could not be created.",
+        ),
     }
 }
 
@@ -397,7 +556,13 @@ pub async fn get_conversation(
     {
         Ok(Some(chat)) => chat,
         Ok(None) => return not_found(),
-        Err(_) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, "backend_error", "The chat could not be loaded."),
+        Err(_) => {
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "backend_error",
+                "The chat could not be loaded.",
+            );
+        }
     };
     let messages = match sqlx::query_as::<_, MessageRow>(
         "SELECT id, request_id, role, content, status, sequence, created_at
@@ -408,7 +573,13 @@ pub async fn get_conversation(
     .await
     {
         Ok(messages) => messages,
-        Err(_) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, "backend_error", "The chat could not be loaded."),
+        Err(_) => {
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "backend_error",
+                "The chat could not be loaded.",
+            );
+        }
     };
     Json(json!({
         "conversation": chat,
@@ -435,7 +606,9 @@ pub async fn update_conversation(
     let title = match body.title.as_deref() {
         Some(title) => match clean_label(title, "Use a title between 1 and 80 characters.") {
             Ok(title) => Some(title),
-            Err(message) => return json_error(StatusCode::UNPROCESSABLE_ENTITY, "invalid_title", message),
+            Err(message) => {
+                return json_error(StatusCode::UNPROCESSABLE_ENTITY, "invalid_title", message);
+            }
         },
         None => None,
     };
@@ -466,7 +639,11 @@ pub async fn update_conversation(
         }))
         .into_response(),
         Ok(None) => not_found(),
-        Err(_) => json_error(StatusCode::INTERNAL_SERVER_ERROR, "backend_error", "The chat could not be updated."),
+        Err(_) => json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "backend_error",
+            "The chat could not be updated.",
+        ),
     }
 }
 
@@ -486,18 +663,31 @@ pub async fn append_user(
     };
     let request_id = match clean_request_id(&body.request_id) {
         Ok(id) => id,
-        Err(message) => return json_error(StatusCode::UNPROCESSABLE_ENTITY, "invalid_request", message),
+        Err(message) => {
+            return json_error(StatusCode::UNPROCESSABLE_ENTITY, "invalid_request", message);
+        }
     };
     let content = match clean_content(&body.content) {
         Ok(content) => content,
-        Err(message) => return json_error(StatusCode::UNPROCESSABLE_ENTITY, "invalid_message", message),
+        Err(message) => {
+            return json_error(StatusCode::UNPROCESSABLE_ENTITY, "invalid_message", message);
+        }
     };
-    if owned_conversation(&state, user_id, conversation_id).await.is_err() {
+    if owned_conversation(&state, user_id, conversation_id)
+        .await
+        .is_err()
+    {
         return not_found();
     }
     let mut tx = match state.pool.begin().await {
         Ok(tx) => tx,
-        Err(_) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, "backend_error", "The message could not be saved."),
+        Err(_) => {
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "backend_error",
+                "The message could not be saved.",
+            );
+        }
     };
     let existing = sqlx::query_as::<_, MessageRow>(
         "SELECT id, request_id, role, content, status, sequence, created_at
@@ -535,7 +725,13 @@ pub async fn append_user(
                 Err(_) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, "backend_error", "The message could not be saved."),
             }
         }
-        Err(_) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, "backend_error", "The message could not be saved."),
+        Err(_) => {
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "backend_error",
+                "The message could not be saved.",
+            );
+        }
     };
     let title = chat_title(&message.content);
     if sqlx::query(
@@ -551,10 +747,18 @@ pub async fn append_user(
     .await
     .is_err()
     {
-        return json_error(StatusCode::INTERNAL_SERVER_ERROR, "backend_error", "The message could not be saved.");
+        return json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "backend_error",
+            "The message could not be saved.",
+        );
     }
     if tx.commit().await.is_err() {
-        return json_error(StatusCode::INTERNAL_SERVER_ERROR, "backend_error", "The message could not be saved.");
+        return json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "backend_error",
+            "The message could not be saved.",
+        );
     }
     Json(json!({ "message": message, "history": "saved" })).into_response()
 }
@@ -575,16 +779,29 @@ pub async fn append_reply(
     };
     let request_id = match clean_request_id(&body.request_id) {
         Ok(id) => id,
-        Err(message) => return json_error(StatusCode::UNPROCESSABLE_ENTITY, "invalid_request", message),
+        Err(message) => {
+            return json_error(StatusCode::UNPROCESSABLE_ENTITY, "invalid_request", message);
+        }
     };
     if !matches!(body.status.as_str(), "complete" | "interrupted" | "error") {
-        return json_error(StatusCode::UNPROCESSABLE_ENTITY, "invalid_status", "Reply status must be complete, interrupted or error.");
+        return json_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_status",
+            "Reply status must be complete, interrupted or error.",
+        );
     }
     let content = body.content.trim();
     if content.chars().count() > MAX_CONTENT {
-        return json_error(StatusCode::UNPROCESSABLE_ENTITY, "invalid_message", "A message must be between 1 and 8000 characters.");
+        return json_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_message",
+            "A message must be between 1 and 8000 characters.",
+        );
     }
-    if owned_conversation(&state, user_id, conversation_id).await.is_err() {
+    if owned_conversation(&state, user_id, conversation_id)
+        .await
+        .is_err()
+    {
         return not_found();
     }
     let user_exists = sqlx::query_scalar::<_, bool>(
@@ -595,7 +812,11 @@ pub async fn append_reply(
     .fetch_optional(&state.pool)
     .await;
     if !matches!(user_exists, Ok(Some(true))) {
-        return json_error(StatusCode::CONFLICT, "missing_user_turn", "Save the user message before its reply.");
+        return json_error(
+            StatusCode::CONFLICT,
+            "missing_user_turn",
+            "Save the user message before its reply.",
+        );
     }
     let sequence: i32 = match sqlx::query_scalar(
         "SELECT COALESCE(MAX(sequence), 0) + 1 FROM conversation_messages WHERE conversation_id = $1",
@@ -607,13 +828,12 @@ pub async fn append_reply(
         Ok(sequence) => sequence,
         Err(_) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, "backend_error", "The reply could not be saved."),
     };
-    let saved = sqlx::query_as::<_, MessageRow>(
+    let saved = sqlx::query_as::<_, MessageRow>(&format!(
         "INSERT INTO conversation_messages (id, conversation_id, request_id, role, content, status, sequence)
          VALUES ($1, $2, $3, 'assistant', $4, $5, $6)
-         ON CONFLICT (conversation_id, request_id, role) DO UPDATE
-         SET content = EXCLUDED.content, status = EXCLUDED.status
-         RETURNING id, request_id, role, content, status, sequence, created_at",
-    )
+         {MERGE_REPLY}
+         RETURNING id, request_id, role, content, status, sequence, created_at"
+    ))
     .bind(Uuid::new_v4())
     .bind(conversation_id)
     .bind(&request_id)
@@ -624,28 +844,40 @@ pub async fn append_reply(
     .await;
     match saved {
         Ok(message) => {
-            let _ = sqlx::query("UPDATE conversations SET updated_at = NOW() WHERE id = $1 AND user_id = $2")
-                .bind(conversation_id)
-                .bind(user_id)
-                .execute(&state.pool)
-                .await;
+            let _ = sqlx::query(
+                "UPDATE conversations SET updated_at = NOW() WHERE id = $1 AND user_id = $2",
+            )
+            .bind(conversation_id)
+            .bind(user_id)
+            .execute(&state.pool)
+            .await;
             Json(json!({ "message": message, "history": "saved" })).into_response()
         }
-        Err(_) => json_error(StatusCode::INTERNAL_SERVER_ERROR, "backend_error", "The reply could not be saved."),
+        Err(_) => json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "backend_error",
+            "The reply could not be saved.",
+        ),
     }
 }
 
-async fn owned_conversation(state: &AppState, user_id: Uuid, conversation_id: Uuid) -> Result<(), ()> {
-    sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM conversations WHERE id = $1 AND user_id = $2)")
-        .bind(conversation_id)
-        .bind(user_id)
-        .fetch_optional(&state.pool)
-        .await
-        .ok()
-        .flatten()
-        .filter(|found| *found)
-        .map(|_| ())
-        .ok_or(())
+async fn owned_conversation(
+    state: &AppState,
+    user_id: Uuid,
+    conversation_id: Uuid,
+) -> Result<(), ()> {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = $1 AND user_id = $2)",
+    )
+    .bind(conversation_id)
+    .bind(user_id)
+    .fetch_optional(&state.pool)
+    .await
+    .ok()
+    .flatten()
+    .filter(|found| *found)
+    .map(|_| ())
+    .ok_or(())
 }
 
 #[cfg(test)]
@@ -655,7 +887,10 @@ mod tests {
     #[test]
     fn titles_come_from_the_first_message_without_a_model_call() {
         assert_eq!(chat_title("   "), "New chat");
-        assert_eq!(chat_title("Help me\nvalidate a product idea"), "Help me validate a product idea");
+        assert_eq!(
+            chat_title("Help me\nvalidate a product idea"),
+            "Help me validate a product idea"
+        );
         let long = "a".repeat(80);
         assert_eq!(chat_title(&long).chars().count(), 60);
         assert!(chat_title(&long).ends_with('…'));

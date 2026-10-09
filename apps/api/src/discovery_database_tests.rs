@@ -213,6 +213,44 @@ async fn proxy_credentials_are_isolated_encrypted_and_never_returned(pool: PgPoo
     assert!(!body.contains(KEY));
     assert!(body.contains("\"status\":\"ready\""));
 
+    // A later test of the same saved connection sends no key. The API reuses the
+    // stored one upstream and still does not return it.
+    seen.lock().unwrap().clear();
+    let (status, body) = send(
+        &router,
+        request(
+            "POST",
+            "/model-proxy",
+            &alice,
+            ORIGIN,
+            Some(json!({
+                "connection_name": "Mock proxy",
+                "base_url": format!("{base}/v1"),
+                "api_key": null,
+                "model_id": "mock-model",
+                "max_output_tokens": 400,
+                "test": true,
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        !body.contains(KEY),
+        "the stored key must stay off the response: {body}"
+    );
+    assert!(body.contains("\"key_saved\":true"), "{body}");
+    assert!(body.contains("\"status\":\"ready\""), "{body}");
+    {
+        let calls = seen.lock().unwrap();
+        assert_eq!(calls.len(), 1, "retest sends exactly one upstream request");
+        assert_eq!(
+            calls[0].authorization.as_deref(),
+            Some(format!("Bearer {KEY}").as_str()),
+            "the stored key is what the provider receives"
+        );
+    }
+
     let (_, body) = send(&router, request("GET", "/model-proxy", &bob, ORIGIN, None)).await;
     assert!(body.contains("\"configured\":false"), "{body}");
     let (status, body) = send(
@@ -330,10 +368,10 @@ async fn chat_streams_a_real_reply_and_sends_only_the_current_conversation(pool:
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert!(
-        body.contains("event: memory\ndata: {\"state\":\"off\"}"),
-        "{body}"
-    );
+    // Memory off says so, and why; it is not a silent absence of recall.
+    assert!(body.contains("event: memory"), "{body}");
+    assert!(body.contains("\"state\":\"off\""), "{body}");
+    assert!(body.contains("\"reason\":\"memory_off\""), "{body}");
     assert!(body.contains("event: request"));
     assert!(body.contains("\"memory_context_included\":false"));
     assert!(body.contains("event: delta\ndata: {\"text\":\"Hello \"}"));
@@ -450,9 +488,26 @@ async fn memory_failures_are_never_reported_as_success(pool: PgPool) {
         ),
     )
     .await;
+    let (status, body) = send(
+        &router,
+        request(
+            "POST",
+            "/projects",
+            &alice,
+            ORIGIN,
+            Some(json!({"name": "P", "request_id": "memfail-proj-1"})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let project = serde_json::from_str::<Value>(&body).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let calls_before = seen.lock().unwrap().len();
 
-    let (_, body) = send(
+    // No project: refused up front, before Memory or the model is touched.
+    let (status, body) = send(
         &router,
         request(
             "POST",
@@ -462,6 +517,26 @@ async fn memory_failures_are_never_reported_as_success(pool: PgPool) {
             Some(json!({
                 "messages": [{ "role": "user", "content": "What do you remember?" }],
                 "use_memory": true
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert!(body.contains("project_required"), "{body}");
+    assert_eq!(seen.lock().unwrap().len(), calls_before);
+
+    // In a project, but Memory is not connected: an error, never a silent answer.
+    let (_, body) = send(
+        &router,
+        request(
+            "POST",
+            "/discovery/chat",
+            &alice,
+            ORIGIN,
+            Some(json!({
+                "messages": [{ "role": "user", "content": "What do you remember?" }],
+                "use_memory": true,
+                "project_id": project
             })),
         ),
     )
@@ -483,7 +558,8 @@ async fn memory_failures_are_never_reported_as_success(pool: PgPool) {
             &alice,
             ORIGIN,
             Some(json!({
-                "facts": [{ "client_id": Uuid::new_v4(), "text": "We have two engineers." }]
+                "facts": [{ "client_id": Uuid::new_v4(), "text": "We have two engineers." }],
+                "project_id": project
             })),
         ),
     )

@@ -1285,4 +1285,10 @@ describe("AgentsRoute", () => {
       screen.queryByText("Provider login is required. Reconnect this pool."),
     ).not.toBeInTheDocument();
   });
+
+  it("renders Connect model link pointing to /builder/integrations?connect=model", async () => {
+    renderRoute();
+    const connectModel = await screen.findByRole("link", { name: "Connect model" });
+    expect(connectModel).toHaveAttribute("href", "/builder/integrations?connect=model");
+  });
 });

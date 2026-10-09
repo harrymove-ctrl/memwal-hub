@@ -48,8 +48,26 @@ const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$/;
 
 export type ProxyFormErrors = Partial<Record<keyof ModelProxyForm, string>>;
 
-/** Client-side checks mirror the backend; the backend remains authoritative. */
-export function validateProxyForm(form: ModelProxyForm, keySaved: boolean): ProxyFormErrors {
+function hostOf(url: string): string | null {
+  try {
+    return new URL(url.trim()).host.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/** Same connection URL once trailing slashes are ignored. */
+export function sameBaseUrl(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false;
+  return a.trim().replace(/\/+$/, "") === b.trim().replace(/\/+$/, "");
+}
+
+/**
+ * Client-side checks mirror the backend; the backend remains authoritative.
+ * `savedBaseUrl` is the URL the stored key belongs to: the stored key is only
+ * reused for that host, so pointing the connection elsewhere needs a new key.
+ */
+export function validateProxyForm(form: ModelProxyForm, keySaved: boolean, savedBaseUrl: string | null = null): ProxyFormErrors {
   const errors: ProxyFormErrors = {};
   if (!form.connectionName.trim()) errors.connectionName = "Enter a connection name.";
   else if (form.connectionName.trim().length > 60) errors.connectionName = "Use 60 characters or fewer.";
@@ -68,6 +86,9 @@ export function validateProxyForm(form: ModelProxyForm, keySaved: boolean): Prox
   }
   if (!form.apiKey.trim() && !keySaved) errors.apiKey = "Enter the API key.";
   else if (/\s/.test(form.apiKey.trim())) errors.apiKey = "The key cannot contain spaces.";
+  else if (!form.apiKey.trim() && keySaved && savedBaseUrl && !errors.baseUrl && hostOf(form.baseUrl) !== hostOf(savedBaseUrl)) {
+    errors.apiKey = "Enter the API key for the new host. The stored key is only reused for the saved URL.";
+  }
   if (!MODEL_ID.test(form.modelId.trim())) errors.modelId = "Enter a model ID such as provider-model-name.";
   const max = Number(form.maxOutputTokens);
   if (!Number.isInteger(max) || max < 64 || max > 8192) errors.maxOutputTokens = "Use a whole number from 64 to 8192.";
@@ -157,6 +178,12 @@ const modelProxyService = {
     requestJson<ModelProxyStatus>("/model-proxy", { method: "POST", body: JSON.stringify(formToPayload(form, test)) }),
   test: () => requestJson<ModelProxyStatus>("/model-proxy/test", { method: "POST" }),
   models: () => requestJson<ModelList>("/model-proxy/models"),
+  /** Lists models for a draft URL. An empty key reuses the stored key for the same host only. */
+  discoverModels: (baseUrl: string, apiKey: string) =>
+    requestJson<ModelList>("/model-proxy/models", {
+      method: "POST",
+      body: JSON.stringify({ base_url: baseUrl.trim(), api_key: apiKey.trim() || null }),
+    }),
   disconnect: () => requestJson<ModelProxyStatus>("/model-proxy", { method: "DELETE" }),
 };
 
@@ -168,7 +195,7 @@ export function proxyBadge(status: ModelProxyStatus | undefined, testing: boolea
     case "ready":
       return { label: "Ready", tone: "ok" };
     case "untested":
-      return { label: "Needs attention", tone: "warn" };
+      return { label: "Not tested", tone: "warn" };
     case "needs_attention":
       return { label: "Needs attention", tone: "warn" };
     case "unavailable":

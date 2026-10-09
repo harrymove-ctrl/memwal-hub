@@ -11,6 +11,36 @@ export const ZOOM_MAX = 2;
 export const ZOOM_STEP = 0.25;
 export const DEFAULT_VIEWPORT: Viewport = { x: 0, y: 0, zoom: 1 };
 
+/** Zoom and pan that puts every node inside the viewport. Null when there is nothing to fit. */
+export function fitViewport(
+  boxes: Array<{ x: number; y: number; width: number; height: number }>,
+  view: { width: number; height: number },
+  limits: { min: number; max: number; pad: number } = { min: ZOOM_MIN, max: ZOOM_MAX, pad: 24 },
+): Viewport | null {
+  if (!boxes.length || view.width <= 0 || view.height <= 0) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const box of boxes) {
+    if (![box.x, box.y, box.width, box.height].every(Number.isFinite) || box.width < 0 || box.height < 0) return null;
+    minX = Math.min(minX, box.x);
+    minY = Math.min(minY, box.y);
+    maxX = Math.max(maxX, box.x + box.width);
+    maxY = Math.max(maxY, box.y + box.height);
+  }
+  const width = Math.max(1, maxX - minX);
+  const height = Math.max(1, maxY - minY);
+  const availableWidth = Math.max(1, view.width - limits.pad * 2);
+  const availableHeight = Math.max(1, view.height - limits.pad * 2);
+  const raw = Math.min(limits.max, availableWidth / width, availableHeight / height);
+  const zoom = Math.round(Math.min(limits.max, Math.max(limits.min, raw)) * 20) / 20;
+  if (!Number.isFinite(zoom) || zoom <= 0) return null;
+  const x = limits.pad + (availableWidth - width * zoom) / 2 - minX * zoom;
+  const y = limits.pad + (availableHeight - height * zoom) / 2 - minY * zoom;
+  return Number.isFinite(x) && Number.isFinite(y) ? { x, y, zoom } : null;
+}
+
 /** World positions measured from the reference at 1440×900 (canvas origin = canvas top-left). */
 const POS: Record<SectionId, { x: number; y: number }> = {
   schedule: { x: 24, y: 48 }, triggers: { x: 24, y: 48 }, channels: { x: 24, y: 200 }, memory: { x: 24, y: 210 },
@@ -143,11 +173,12 @@ export function Canvas({ config, visible, viewport, onViewport, runPanelHidden, 
   };
   const fitWorkflow = () => {
     const el = wrap.current;
-    const needed = 760;
-    const available = Math.max(180, (el?.clientWidth ?? needed) - 32);
-    const zoom = Math.min(1, Math.max(ZOOM_MIN, Math.round((available / needed) * 20) / 20));
+    if (!el) return;
+    const boxes = [...nodes.current.values()].map((node) => ({ x: node.offsetLeft, y: node.offsetTop, width: node.offsetWidth, height: node.offsetHeight }));
+    const next = fitViewport(boxes, { width: el.clientWidth, height: el.clientHeight });
+    if (!next) return;
     setAnimating(true);
-    onViewport({ x: 12, y: 8, zoom });
+    onViewport(next);
   };
   const pct = Math.round(viewport.zoom * 100);
 
@@ -255,7 +286,6 @@ export function Canvas({ config, visible, viewport, onViewport, runPanelHidden, 
               <div className="cv-collapse" data-open={isOpen("instructions")}><div>
                 <div className="cv-card cv-instr">
                   <button className="btn cv-instr-edit" onClick={() => onEdit("instructions")}>Edit</button>
-                  <strong>{config.name}</strong>
                   <p>{config.instructions}</p>
                 </div>
               </div></div>
@@ -271,7 +301,7 @@ export function Canvas({ config, visible, viewport, onViewport, runPanelHidden, 
       <p id="cv-keys" hidden>Use arrow keys to pan, plus and minus to zoom, 0 to reset.</p>
       <div className="cv-zoom" role="group" aria-label="Zoom">
         <button className="icon-btn" aria-label="Zoom in" onClick={() => zoomTo(viewport.zoom + ZOOM_STEP)} disabled={viewport.zoom >= ZOOM_MAX}><Plus size={13} /></button>
-        <button className="cv-pct" aria-label={`Zoom ${pct} percent`} onClick={() => fitWorkflow()}>{pct}%</button>
+        <button className="cv-pct" aria-label="Reset to 100 percent" onClick={() => { setAnimating(true); onViewport(DEFAULT_VIEWPORT); }}>{pct}%</button>
         <button className="icon-btn" aria-label="Fit workflow" onClick={() => fitWorkflow()}>Fit</button>
         <button className="icon-btn" aria-label="Zoom out" onClick={() => zoomTo(viewport.zoom - ZOOM_STEP)} disabled={viewport.zoom <= ZOOM_MIN}><Minus size={13} /></button>
       </div>
@@ -286,6 +316,9 @@ function ToolRows({ tools }: { tools: AgentConfig["tools"] }) {
     ["save", "Save"],
     ["advanced", "Advanced"],
   ] as const;
+  if (!tools.length) {
+    return <p className="cv-empty">No memory tools configured</p>;
+  }
   return (
     <div className="cv-tool-groups">
       {groups.map(([group, label]) => {

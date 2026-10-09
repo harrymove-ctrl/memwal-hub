@@ -7,6 +7,7 @@ import { NavLink, useSearchParams } from "react-router";
 import { OpenSidebarButton, type ShellCtx } from "../App";
 import { ReplyText } from "../components/ReplyText";
 import { BuilderApiError } from "../services/api-client";
+import { getAgentRevision } from "../services/builder-agents";
 import { appendReply, appendUserMessage, createConversation, createProject, getConversation, listConversations, listProjects, updateConversation, type ConversationSummary, type Project, type StoredMessage } from "../services/conversations";
 import {
   chatErrorMessage,
@@ -14,10 +15,12 @@ import {
   saveFacts,
   streamChat,
   suggestFacts,
+  type AgentRef,
   type ChatTurn,
   type DoneEvent,
   type FactJob,
   type MemoryEvent,
+  type MemoryScope,
   type RequestShape,
 } from "../services/discovery-chat";
 import { proxyBadge } from "../services/model-proxy";
@@ -26,7 +29,7 @@ import { useMemorySession, useModelProxyStatus, useProxyModels, useRefreshIntegr
 import "./pages.css";
 import "./chat.css";
 
-type Phase = "idle" | "recalling" | "generating" | "reviewing" | "saving";
+type Phase = "idle" | "recalling" | "generating";
 type FactState = "suggested" | "saving" | "saved" | "failed" | "uncertain";
 
 export interface Suggestion {
@@ -40,6 +43,9 @@ export interface Suggestion {
   message: string | null;
 }
 
+/** Fact extraction for one reply. A failure is never shown as "no facts". */
+export type Extraction = { state: "loading" } | { state: "done" } | { state: "failed"; code: string; message: string };
+
 interface AssistantTurn {
   id: string;
   role: "assistant";
@@ -49,8 +55,11 @@ interface AssistantTurn {
   shape?: RequestShape;
   done?: DoneEvent;
   error?: { code: string; message: string };
+  /** Memory scope the run used; absent when Memory was off or the chat is temporary. */
+  scope?: MemoryScope;
+  agent?: AgentRef;
+  extraction?: Extraction;
   suggestions?: Suggestion[];
-  suggestionNote?: string;
 }
 
 interface UserTurn {
@@ -61,6 +70,14 @@ interface UserTurn {
 }
 
 type Turn = UserTurn | AssistantTurn;
+
+/** Chat-history persistence, reported separately from generation and Memory writes. */
+export type HistoryStatus =
+  | { state: "idle" }
+  | { state: "saving" }
+  | { state: "saved" }
+  | { state: "failed"; message: string }
+  | { state: "temporary" };
 
 const NEAR_BOTTOM_PX = 48;
 const POLL_MS = 3000;
@@ -96,11 +113,30 @@ export function factStateFromJob(job: FactJob): FactState {
   return "saving";
 }
 
+/**
+ * True while an input method is composing text. Chrome and Firefox set
+ * `isComposing` on the Enter that confirms a composition; Safari fires
+ * `compositionend` first and reports that Enter with keyCode 229, so all
+ * three signals are checked. That Enter belongs to the input method and must
+ * never submit.
+ */
+export function isImeEnter(event: { nativeEvent: { isComposing?: boolean; keyCode?: number } }, composing: boolean): boolean {
+  return composing || event.nativeEvent.isComposing === true || event.nativeEvent.keyCode === 229;
+}
+
+/** The agent revision allows Memory writes unless the run reported a tool list without it. */
+function mayRemember(turn: AssistantTurn): boolean {
+  const tools = turn.shape?.agent?.tools;
+  return !tools || tools.includes("memwal_remember");
+}
+
 /** Workspace chat. Product discovery is one use; the same thread can cover other work. */
 export function ChatPage({ ctx }: { ctx: ShellCtx }) {
   const [params, setParams] = useSearchParams();
   const projectId = params.get("project") ?? "";
   const conversationId = params.get("conversation") ?? "";
+  const agentKey = params.get("agent") ?? "";
+  const agentRevision = Number(params.get("rev")) || undefined;
   const proxy = useModelProxyStatus();
   const memory = useMemorySession();
   const refresh = useRefreshIntegrations();
@@ -111,7 +147,7 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
   const [autoSave, setAutoSave] = useState(false);
   // Model for this conversation; empty means the saved ZRouter model.
   const [model, setModel] = useState("");
-  const proxyModels = useProxyModels(proxy.data?.status === "ready");
+  const proxyModels = useProxyModels(proxy.data?.status === "ready", proxy.data?.base_url);
   const [pinned, setPinned] = useState(true);
   const controller = useRef<AbortController | null>(null);
   const runId = useRef(0);
@@ -119,23 +155,46 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
   const scroller = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const activeChat = useRef(conversationId);
+  const urlChat = useRef(conversationId);
   const skipLoad = useRef("");
   const inflight = useRef<{ id: string; requestId: string; reply: string } | null>(null);
   const drafts = useRef(new Map<string, string>());
   const createRequest = useRef<string | null>(null);
+  // Changes whenever the visible chat changes; late results from an older chat are dropped.
+  const chatEpoch = useRef(0);
+  const extractions = useRef(new Map<string, AbortController>());
+  const composing = useRef(false);
+  const sending = useRef(false);
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [chats, setChats] = useState<ConversationSummary[]>([]);
   const [moreCursor, setMoreCursor] = useState<string | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [historyNote, setHistoryNote] = useState<string | null>(null);
+  const [history, setHistory] = useState<HistoryStatus>({ state: "idle" });
+  const [writes, setWrites] = useState<Record<string, FactState>>({});
+  const [temporary, setTemporary] = useState(false);
   const [creating, setCreating] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [draftChoice, setDraftChoice] = useState(false);
+  const [loadedAgent, setAgentInfo] = useState<{ key: string; name: string; revision: number } | null>(null);
+  // Only the agent named in the URL counts; a stale row from a previous agent is ignored.
+  const agentInfo = loadedAgent && loadedAgent.key === agentKey ? loadedAgent : null;
   const historyReady = projects !== null && historyError === null;
-  activeChat.current = conversationId;
+  const canPersist = historyReady && Boolean(projectId);
+  // The visible chat follows the URL only when the URL's conversation really changes. Router
+  // updates are applied in a transition, so a render that still carries the previous (or empty)
+  // value must not overwrite a chat this component has just created or selected itself; doing so
+  // made every stream event of a brand-new chat look "late" and drop the reply.
+  useEffect(() => {
+    if (urlChat.current === conversationId) return;
+    urlChat.current = conversationId;
+    activeChat.current = conversationId;
+  }, [conversationId]);
 
   const proxyReady = proxy.data?.status === "ready";
   const memoryReady = memory.data?.walrus.status === "verified";
+  // Memory is used only inside a saved project chat; never account-wide.
+  const memoryUsable = memoryReady && !temporary && Boolean(projectId);
   const memoryState = memoryBadge(memory.data, memory.error, memory.isLoading);
   const proxyState = proxyBadge(proxy.data, false);
   const busy = phase === "recalling" || phase === "generating";
@@ -143,6 +202,7 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
   useEffect(() => () => {
     controller.current?.abort();
     pollTimers.current.forEach((timer) => window.clearTimeout(timer));
+    extractions.current.forEach((abort) => abort.abort());
   }, []);
 
   useEffect(() => {
@@ -154,13 +214,22 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
   }, []);
 
   useEffect(() => {
-    if (!historyReady || projectId || !projects || projects.length !== 1) return;
+    if (!agentKey) return;
+    let cancelled = false;
+    getAgentRevision(agentKey)
+      .then((row) => { if (!cancelled) setAgentInfo({ key: agentKey, name: row.name, revision: row.revision }); })
+      .catch(() => { if (!cancelled) setAgentInfo(null); });
+    return () => { cancelled = true; };
+  }, [agentKey]);
+
+  useEffect(() => {
+    if (!historyReady || projectId || temporary || !projects || projects.length !== 1) return;
     setParams((current) => {
       const next = new URLSearchParams(current);
       next.set("project", projects[0].id);
       return next;
     }, { replace: true });
-  }, [historyReady, projectId, projects, setParams]);
+  }, [historyReady, projectId, projects, setParams, temporary]);
 
   useEffect(() => {
     if (!historyReady || !projectId) return;
@@ -182,6 +251,7 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
       .then((detail) => {
         if (cancelled || activeChat.current !== conversationId) return;
         setTurns(detail.messages.map(storedTurn));
+        setHistory({ state: "saved" });
       })
       .catch((error: unknown) => { if (!cancelled) setHistoryError(error instanceof Error ? error.message : "That chat was not found."); });
     return () => { cancelled = true; };
@@ -207,98 +277,115 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
       ...turn,
       suggestions: turn.suggestions?.map((item) => (item.id === factId ? { ...item, ...change } : item)),
     }));
+    if (change.state) {
+      const state = change.state;
+      setWrites((current) => (factId in current || state !== "suggested" ? { ...current, [factId]: state } : current));
+    }
   }, [updateAssistant]);
 
-  const pollJobs = useCallback((turnId: string, ids: string[], attempt: number) => {
-    if (!ids.length) {
-      setPhase((current) => (current === "saving" ? "idle" : current));
-      return;
-    }
+  const pollAgain = useRef<(turnId: string, ids: string[], scope: MemoryScope, attempt: number) => void>(() => undefined);
+  const pollJobs = useCallback((turnId: string, ids: string[], scope: MemoryScope, attempt: number) => {
+    if (!ids.length) return;
     const timer = window.setTimeout(async () => {
       try {
-        const { jobs } = await factStatus(ids);
+        const { jobs } = await factStatus(ids, scope);
         const open: string[] = [];
         for (const job of jobs) {
           const state = factStateFromJob(job);
           updateSuggestion(turnId, job.client_id, { state, jobId: job.job_id, blobId: job.blob_id, message: job.message });
           if (state === "saving") open.push(job.client_id);
         }
-        if (open.length && attempt + 1 < POLL_LIMIT) pollJobs(turnId, open, attempt + 1);
+        if (open.length && attempt + 1 < POLL_LIMIT) pollAgain.current(turnId, open, scope, attempt + 1);
         else {
           for (const id of open) updateSuggestion(turnId, id, { state: "uncertain", message: "Storage was not confirmed yet. Check again later; nothing will be written twice." });
-          setPhase((current) => (current === "saving" ? "idle" : current));
         }
       } catch (error) {
         for (const id of ids) updateSuggestion(turnId, id, { state: "uncertain", message: error instanceof Error ? error.message : "Status could not be checked." });
-        setPhase((current) => (current === "saving" ? "idle" : current));
       }
     }, POLL_MS);
     pollTimers.current.push(timer);
   }, [updateSuggestion]);
+  useEffect(() => { pollAgain.current = pollJobs; }, [pollJobs]);
 
-  const saveSelected = useCallback(async (turnId: string, items: Suggestion[]) => {
-    const chosen = items.filter((item) => item.selected && (item.state === "suggested" || item.state === "failed" || item.state === "uncertain"));
+  const saveSelected = useCallback(async (turnId: string, items: Suggestion[], scope: MemoryScope, agent?: AgentRef) => {
+    const chosen = items.filter((item) => item.selected && item.text.trim() && (item.state === "suggested" || item.state === "failed" || item.state === "uncertain"));
     if (!chosen.length) return;
-    setPhase("saving");
-    for (const item of chosen) updateSuggestion(turnId, item.id, { state: "saving", message: null });
+    // Sending means accepted at most; Saved waits for a blob ID from storage.
+    for (const item of chosen) updateSuggestion(turnId, item.id, { state: "saving", jobId: null, message: null });
     try {
-      const { jobs } = await saveFacts(chosen.map((item) => ({ client_id: item.id, text: item.text })), projectId || undefined);
+      const { jobs } = await saveFacts(chosen.map((item) => ({ client_id: item.id, text: item.text.trim() })), scope, agent);
       const open: string[] = [];
       for (const job of jobs) {
         const state = factStateFromJob(job);
         updateSuggestion(turnId, job.client_id, { state, jobId: job.job_id, blobId: job.blob_id, message: job.message });
         if (state === "saving") open.push(job.client_id);
       }
-      pollJobs(turnId, open, 0);
+      pollJobs(turnId, open, scope, 0);
     } catch (error) {
+      const failed = error instanceof BuilderApiError && error.status >= 400 && error.status < 500;
       const message = error instanceof BuilderApiError ? error.message : "The save request did not reach the backend.";
-      for (const item of chosen) updateSuggestion(turnId, item.id, { state: "uncertain", message: `${message} Retrying reuses the same idempotency key.` });
-      setPhase("idle");
+      for (const item of chosen) {
+        updateSuggestion(turnId, item.id, failed
+          ? { state: "failed", message: `${chatErrorMessage(error.code, message)} Nothing was written.` }
+          : { state: "uncertain", message: `${message} Retrying reuses the same idempotency key.` });
+      }
     }
-  }, [pollJobs, updateSuggestion, projectId]);
+  }, [pollJobs, updateSuggestion]);
 
-  const loadSuggestions = useCallback(async (turnId: string, userText: string, reply: string, myRun: number) => {
-    setPhase("reviewing");
+  /** Asks for fact suggestions for one finished reply. It never regenerates the reply and never saves on its own. */
+  const extract = useCallback(async (turnId: string, userText: string, reply: string, scope: MemoryScope, agent: AgentRef | undefined, saveAfter: boolean) => {
+    extractions.current.get(turnId)?.abort();
+    const abort = new AbortController();
+    extractions.current.set(turnId, abort);
+    const epoch = chatEpoch.current;
+    const current = () => !abort.signal.aborted && chatEpoch.current === epoch;
+    updateAssistant(turnId, (turn) => ({ ...turn, extraction: { state: "loading" }, suggestions: undefined }));
     try {
-      const result = await suggestFacts(userText, reply);
-      if (runId.current !== myRun) return;
+      const result = await suggestFacts(userText, reply, scope, agent, abort.signal);
+      if (!current()) return;
       const items: Suggestion[] = result.facts.map((fact) => ({ ...fact, selected: true, state: "suggested", jobId: null, blobId: null, message: null }));
-      updateAssistant(turnId, (turn) => ({
-        ...turn,
-        suggestions: items,
-        suggestionNote: items.length ? undefined : "No durable facts were found in this message.",
-      }));
-      setPhase("idle");
-      if (autoSave && items.length) void saveSelected(turnId, items);
+      updateAssistant(turnId, (turn) => ({ ...turn, extraction: { state: "done" }, suggestions: items }));
+      if (saveAfter && items.length) void saveSelected(turnId, items, scope, agent);
     } catch (error) {
-      if (runId.current !== myRun) return;
-      updateAssistant(turnId, (turn) => ({ ...turn, suggestionNote: `Suggestions are unavailable: ${error instanceof Error ? error.message : "request failed"}. Nothing was saved.` }));
-      setPhase("idle");
+      if (!current()) return;
+      const code = error instanceof BuilderApiError ? error.code : "backend_unavailable";
+      const message = error instanceof Error ? error.message : "Suggestions could not be loaded.";
+      updateAssistant(turnId, (turn) => ({ ...turn, extraction: { state: "failed", code, message } }));
+    } finally {
+      if (extractions.current.get(turnId) === abort) extractions.current.delete(turnId);
     }
-  }, [autoSave, saveSelected, updateAssistant]);
+  }, [saveSelected, updateAssistant]);
 
-  const run = useCallback(async (text: string, history: Turn[], withMemory: boolean, saved?: { id: string; requestId: string }) => {
+  const run = useCallback(async (text: string, previous: Turn[], withMemory: boolean, saved?: { id: string; requestId: string }) => {
     controller.current?.abort();
     const abort = new AbortController();
     controller.current = abort;
     const myRun = ++runId.current;
     const userTurn: UserTurn = { id: newId(), role: "user", content: text, requestId: saved?.requestId };
     const assistantId = newId();
-    const conversation = conversationFor(history, text);
+    const conversation = conversationFor(previous, text);
+    // Memory needs a project; a temporary or project-less chat never sends one.
+    const scope: MemoryScope | undefined = withMemory && projectId ? { projectId, conversationId: saved?.id } : undefined;
+    const agent: AgentRef | undefined = agentKey ? { key: agentKey, revision: agentRevision } : undefined;
     if (saved) inflight.current = { id: saved.id, requestId: saved.requestId, reply: "" };
-    setTurns([...history, userTurn, { id: assistantId, role: "assistant", content: "", status: "streaming" }]);
+    setTurns([...previous, userTurn, { id: assistantId, role: "assistant", content: "", status: "streaming", scope, agent }]);
     setPinned(true);
-    setPhase(withMemory ? "recalling" : "generating");
+    setPhase(scope ? "recalling" : "generating");
     let reply = "";
     let finished = false;
     let failed = false;
+    let shape: RequestShape | undefined;
     const stillHere = () => runId.current === myRun && (!saved || activeChat.current === saved.id);
     try {
       await streamChat({
         messages: conversation,
-        useMemory: withMemory,
+        useMemory: Boolean(scope),
         model: model || undefined,
-        projectId: projectId || undefined,
+        projectId: scope?.projectId,
+        conversationId: saved?.id,
+        requestId: saved?.requestId,
+        agentKey: agent?.key,
+        agentRevision: agent?.revision,
         signal: abort.signal,
         onEvent: (event) => {
           if (!stillHere()) return;
@@ -308,7 +395,8 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
               if (event.data.state !== "recalling") setPhase("generating");
               break;
             case "request":
-              updateAssistant(assistantId, (turn) => ({ ...turn, shape: event.data }));
+              shape = event.data;
+              updateAssistant(assistantId, (turn) => ({ ...turn, shape: event.data, agent: event.data.agent ? { key: event.data.agent.key, revision: event.data.agent.revision } : turn.agent }));
               setPhase("generating");
               break;
             case "delta":
@@ -338,32 +426,41 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
     controller.current = null;
     if (saved && inflight.current?.requestId === saved.requestId) inflight.current = null;
     if (saved) {
+      // The server also stores the reply; this write confirms it and cannot shorten it.
+      setHistory({ state: "saving" });
       void appendReply(saved.id, saved.requestId, reply, finished ? "complete" : "error")
-        .then(() => setHistoryNote("History saved"))
-        .catch((error: unknown) => setHistoryNote(error instanceof Error ? error.message : "The reply was not saved to history."));
+        .then(() => setHistory({ state: "saved" }))
+        .catch((error: unknown) => setHistory({ state: "failed", message: error instanceof Error ? `The reply was not saved to history: ${error.message}` : "The reply was not saved to history." }));
     }
+    setPhase("idle");
     if (finished && reply.trim()) {
-      void loadSuggestions(assistantId, text, reply, myRun);
+      const remember = !shape?.agent?.tools || shape.agent.tools.includes("memwal_remember");
+      if (scope && remember) void extract(assistantId, text, reply, scope, shape?.agent ? { key: shape.agent.key, revision: shape.agent.revision } : agent, autoSave);
+      refresh();
       return;
     }
     if (!finished && !failed) {
       updateAssistant(assistantId, (turn) => ({ ...turn, status: "error", error: { code: "proxy_unavailable", message: "The reply ended before it finished." } }));
     }
     setDraft((current) => current || text);
-    setPhase("idle");
     refresh();
-  }, [loadSuggestions, refresh, updateAssistant, model, projectId]);
+  }, [agentKey, agentRevision, autoSave, extract, model, projectId, refresh, updateAssistant]);
 
   const send = () => {
     const text = draft.trim();
-    if (!text || busy || !proxyReady || creating) return;
-    if (!historyReady || !projectId) {
+    if (!text || busy || !proxyReady || creating || sending.current) return;
+    if (temporary) {
       setDraft("");
-      void run(text, turns, useMemory && memoryReady);
+      setHistory({ state: "temporary" });
+      void run(text, turns, false);
       return;
     }
+    // A message that cannot be saved is not sent: no silent unsaved chat.
+    if (!canPersist) return;
+    sending.current = true;
     const requestId = crypto.randomUUID();
     setCreating(true);
+    setHistory({ state: "saving" });
     void (async () => {
       try {
         let id = conversationId;
@@ -380,15 +477,17 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
             next.set("conversation", chat.id);
             return next;
           });
+          activeChat.current = chat.id;
           id = chat.id;
         }
         await appendUserMessage(id, requestId, text);
-        setHistoryNote("History saved");
+        setHistory({ state: "saved" });
         setDraft("");
-        void run(text, turns, useMemory && memoryReady, { id, requestId });
+        void run(text, turns, useMemory && memoryUsable, { id, requestId });
       } catch (error) {
-        setHistoryNote(error instanceof Error ? `${error.message} Nothing was sent.` : "This message was not saved, so it was not sent.");
+        setHistory({ state: "failed", message: error instanceof Error ? `${error.message} Nothing was sent.` : "This message was not saved, so it was not sent." });
       } finally {
+        sending.current = false;
         setCreating(false);
       }
     })();
@@ -402,22 +501,41 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
     controller.current = null;
     setTurns((current) => current.map((turn) => (turn.role === "assistant" && turn.status === "streaming" ? { ...turn, status: "stopped" } : turn)));
     setPhase("idle");
-    if (flight && activeChat.current === flight.id) {
+    if (flight) {
+      // The partial reply stays with the chat it was generated in, as interrupted.
       void appendReply(flight.id, flight.requestId, flight.reply, "interrupted")
-        .then(() => setHistoryNote("History saved"))
-        .catch(() => setHistoryNote("The interrupted reply was not saved to history."));
+        .then(() => { if (activeChat.current === flight.id) setHistory({ state: "saved" }); })
+        .catch(() => { if (activeChat.current === flight.id) setHistory({ state: "failed", message: "The interrupted reply was not saved to history." }); });
     }
     input.current?.focus();
   };
 
-  /** Re-sends the user message before a failed or stopped reply. */
-  const retry = (assistantId: string, withMemory = useMemory && memoryReady) => {
+  /** Leaves the visible chat: cancels its reply (kept as interrupted) and any running extraction. */
+  const leaveChat = () => {
+    stop();
+    chatEpoch.current += 1;
+    extractions.current.forEach((abort) => abort.abort());
+    extractions.current.clear();
+  };
+
+  /** Re-sends the user message before a failed or stopped reply, reusing its saved request id. */
+  const retry = (assistantId: string, withMemory = useMemory && memoryUsable) => {
     const index = turns.findIndex((turn) => turn.id === assistantId);
     const userTurn = turns[index - 1];
     if (index < 1 || userTurn?.role !== "user") return;
     if (draft.trim() === userTurn.content) setDraft("");
     const saved = userTurn.requestId && conversationId ? { id: conversationId, requestId: userTurn.requestId } : undefined;
     void run(userTurn.content, turns.slice(0, index - 1), withMemory, saved);
+  };
+
+  /** Runs (or re-runs) fact extraction for a finished reply without regenerating it. */
+  const suggestFor = (assistantId: string) => {
+    const index = turns.findIndex((turn) => turn.id === assistantId);
+    const turn = turns[index];
+    const userTurn = turns[index - 1];
+    if (turn?.role !== "assistant" || userTurn?.role !== "user" || !projectId) return;
+    const scope = turn.scope ?? { projectId, conversationId: conversationId || undefined };
+    void extract(assistantId, userTurn.content, turn.content, scope, turn.agent, false);
   };
 
   const newChat = (force = false) => {
@@ -427,10 +545,8 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
       return;
     }
     setDraftChoice(false);
-    stop();
-    pollTimers.current.forEach((timer) => window.clearTimeout(timer));
-    pollTimers.current = [];
-    if (!historyReady || !projectId) {
+    leaveChat();
+    if (temporary || !canPersist) {
       setTurns([]);
       setDraft("");
       setPhase("idle");
@@ -448,6 +564,7 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
         setTurns([]);
         setDraft("");
         setPhase("idle");
+        setHistory({ state: "idle" });
         setParams((current) => {
           const next = new URLSearchParams(current);
           next.set("project", chat.project_id);
@@ -461,7 +578,9 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
   };
 
   const onKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      // The Enter that confirms an input-method composition is left to the IME.
+      if (isImeEnter(event, composing.current)) return;
       event.preventDefault();
       send();
     }
@@ -477,11 +596,13 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
 
   const selectProject = (id: string) => {
     if (id === projectId) return;
-    stop();
+    leaveChat();
     drafts.current.set(conversationId, draft);
     setDraft("");
     setTurns([]);
     setChats([]);
+    setTemporary(false);
+    setHistory({ state: "idle" });
     setParams((current) => {
       const next = new URLSearchParams(current);
       next.set("project", id);
@@ -492,9 +613,10 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
 
   const selectChat = (id: string) => {
     if (id === conversationId) return;
-    stop();
+    leaveChat();
     drafts.current.set(conversationId, draft);
     setDraft(drafts.current.get(id) ?? "");
+    setTemporary(false);
     setParams((current) => {
       const next = new URLSearchParams(current);
       next.set("project", projectId);
@@ -503,12 +625,26 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
     });
   };
 
+  const startTemporary = () => {
+    leaveChat();
+    setTemporary(true);
+    setTurns([]);
+    setHistory({ state: "temporary" });
+    setParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete("conversation");
+      return next;
+    });
+    input.current?.focus();
+  };
+
   const archiveChat = (id: string) => {
     void updateConversation(id, { archived: true })
       .then(() => {
         setChats((current) => current.filter((chat) => chat.id !== id));
         setHistoryNote("Chat archived. Walrus memories were not deleted.");
         if (id === conversationId) {
+          leaveChat();
           setTurns([]);
           setParams((current) => {
             const next = new URLSearchParams(current);
@@ -556,15 +692,34 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
       .finally(() => setCreating(false));
   };
 
-  const hasPendingSaves = turns.some((turn) => turn.role === "assistant" && turn.suggestions?.some((item) => item.state === "saving"));
+  const retryHistory = () => {
+    setHistoryError(null);
+    setProjects(null);
+    void listProjects().then(setProjects).catch((error: unknown) => setHistoryError(error instanceof Error ? error.message : "Chat history is unavailable."));
+  };
+
+  const pendingWrites = Object.values(writes).filter((state) => state === "saving").length;
+  const blocked = !temporary && !canPersist;
+  const blockedReason = historyError
+    ? `Chat history is unavailable (${historyError}), so messages cannot be saved and are not sent. Use Retry in the project list, or start a temporary chat.`
+    : projects === null
+      ? "Loading projects…"
+      : "Choose or create a project to start a saved chat. Memory is scoped to a project.";
 
   return (
     <>
       <header className="page-head">
         <OpenSidebarButton ctx={ctx} />
-        <div className="crumbs"><MessageCircle size={14} /> <h1>Chat</h1></div>
+        <div className="crumbs">
+          <MessageCircle size={14} /> <h1>Chat</h1>
+          {agentKey ? (
+            <span className="dc-muted" data-testid="chat-agent">
+              {agentInfo ? `${agentInfo.name} · revision ${agentRevision ?? agentInfo.revision}` : `Agent ${agentKey}${agentRevision ? ` · revision ${agentRevision}` : ""}`}
+            </span>
+          ) : null}
+        </div>
         <div className="actions">
-          <button type="button" className="btn" disabled={creating || (turns.length === 0 && !draft && !projectId)} onClick={() => newChat()} title={hasPendingSaves ? "Saves already sent keep running on Walrus" : undefined}><Plus size={12} /> New chat</button>
+          <button type="button" className="btn" disabled={creating || (turns.length === 0 && !draft && !projectId)} onClick={() => newChat()} title={pendingWrites ? "Saves already sent keep running on Walrus" : undefined}><Plus size={12} /> New chat</button>
           {draftChoice ? (
             <span className="dc-row">
               <button type="button" className="btn" onClick={() => { drafts.current.set(conversationId, draft); setDraft(""); newChat(true); }}>Keep draft</button>
@@ -593,7 +748,7 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
             <span className="dc-dot" aria-hidden /> Walrus Memory: {memoryState.label}
           </span>
           <label className="dc-toggle">
-            <input type="checkbox" checked={useMemory && memoryReady} disabled={!memoryReady || busy} onChange={(event) => setUseMemory(event.target.checked)} /> Use Memory
+            <input type="checkbox" checked={useMemory && memoryUsable} disabled={!memoryUsable || busy} onChange={(event) => setUseMemory(event.target.checked)} /> Use Memory
           </label>
           <ChatSettings autoSave={autoSave} onAutoSave={setAutoSave} />
           {!proxyReady || !memoryReady ? <NavLink className="link" to="/builder/integrations">Open Integrations</NavLink> : null}
@@ -616,19 +771,22 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
             onRename={renameChat}
             hasMore={moreCursor !== null}
             onMore={loadMoreChats}
-            onRetry={() => { setHistoryError(null); setProjects(null); void listProjects().then(setProjects).catch((error: unknown) => setHistoryError(error instanceof Error ? error.message : "Chat history is unavailable.")); }}
+            onRetry={retryHistory}
           />
           <div className="dc-main">
         <div className="dc-scroll" ref={scroller} onScroll={onScroll}>
           <div className="dc-col">
+            {temporary ? (
+              <p className="dc-callout" role="note">Temporary chat: nothing is saved to history and Memory is off. <button type="button" className="link" onClick={() => { setTemporary(false); setHistory({ state: "idle" }); setTurns([]); }}>Back to project chats</button></p>
+            ) : null}
             {turns.length === 0 ? (
               <div className="dc-intro">
                 <EmptyWhale />
                 <h2 className="chat-title">What should we work on?</h2>
-                <p>Product discovery, a release plan, or something else. Relevant context from past conversations is included only when it matches this message.</p>
-                {!proxyReady ? <p className="dc-callout" role="status">Configure ZRouter and test it until it shows Ready to start chatting. <NavLink to="/builder/integrations">Open Integrations</NavLink></p> : null}
-                {proxyReady && !memoryReady ? <p className="dc-callout" role="status">Walrus Memory is not connected, so this chat will not recall or save anything. <NavLink to="/builder/integrations">Open Integrations</NavLink></p> : null}
-                {proxyReady && memoryReady && !useMemory ? <p className="dc-callout" role="status">Memory is connected and turned off for this chat.</p> : null}
+                <p>Product discovery, a release plan, or something else. Saved project facts are added only when they are relevant to this message.</p>
+                {!proxyReady ? <p className="dc-callout" role="status">Configure ZRouter and test it until it shows Ready to start chatting. <NavLink to="/builder/integrations?connect=model">Connect model</NavLink></p> : null}
+                {proxyReady && !memoryReady ? <p className="dc-callout">Walrus Memory is not connected, so this chat will not recall or save anything. <NavLink to="/builder/integrations?connect=memory">Set up project memory</NavLink></p> : null}
+                {proxyReady && memoryUsable && !useMemory ? <p className="dc-callout">Memory is connected and turned off for this chat.</p> : null}
                 <div className="dc-starters">
                   {STARTERS.map((starter) => (
                     <button type="button" key={starter.label} onClick={() => { setDraft(starter.draft); input.current?.focus(); }}>{starter.label}</button>
@@ -637,20 +795,23 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
               </div>
             ) : (
               <ol className="dc-turns" aria-live="polite" aria-busy={busy}>
-                {turns.map((turn) =>
+                {turns.map((turn, index) =>
                   turn.role === "user" ? (
                     <li key={turn.id} className="dc-user">{turn.content}</li>
                   ) : (
                     <AssistantView
                       key={turn.id}
                       turn={turn}
-                      phase={phase}
-                      memoryReady={memoryReady}
+                      canSuggest={memoryUsable && Boolean(projectId) && turns[index - 1]?.role === "user" && mayRemember(turn)}
                       onRetry={() => retry(turn.id)}
                       onContinueWithoutMemory={() => retry(turn.id, false)}
+                      onSuggest={() => suggestFor(turn.id)}
                       onToggle={(factId, selected) => updateSuggestion(turn.id, factId, { selected })}
                       onEdit={(factId, text) => updateSuggestion(turn.id, factId, { text })}
-                      onSave={() => void saveSelected(turn.id, turn.suggestions ?? [])}
+                      onSave={() => {
+                        const scope = turn.scope ?? (projectId ? { projectId, conversationId: conversationId || undefined } : undefined);
+                        if (scope) void saveSelected(turn.id, turn.suggestions ?? [], scope, turn.agent);
+                      }}
                     />
                   ),
                 )}
@@ -661,17 +822,35 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
         {!pinned ? <button type="button" className="btn dc-latest" onClick={jumpToLatest}><ArrowDown size={12} /> Jump to latest</button> : null}
         <div className="dc-foot">
           <PhaseLine phase={phase} />
-          {historyNote ? <p className="dc-muted" role="status">{historyNote}</p> : null}
+          <StatusStrip history={history} writes={writes} />
+          {blocked ? (
+            <div className="dc-callout dc-blocked" role="alert">
+              <p className="dc-muted">{blockedReason}</p>
+              <div className="dc-row">
+                {projects !== null || historyError ? <button type="button" className="btn" onClick={startTemporary}>Start a temporary chat (not saved, Memory off)</button> : null}
+              </div>
+            </div>
+          ) : null}
           <form className="composer dc-composer" onSubmit={(event) => { event.preventDefault(); send(); }}>
             <label htmlFor="dc-input" className="sr-only">Message</label>
-            <textarea id="dc-input" ref={input} rows={2} placeholder={proxyReady ? "Message" : "Configure ZRouter to start"} value={draft} onChange={(event) => { setDraft(event.target.value); growComposer(event.target); }} onKeyDown={onKey} />
+            <textarea
+              id="dc-input"
+              ref={input}
+              rows={2}
+              placeholder={!proxyReady ? "Configure ZRouter to start" : blocked ? "Choose a project first" : temporary ? "Message (temporary, not saved)" : "Message"}
+              value={draft}
+              onChange={(event) => { setDraft(event.target.value); growComposer(event.target); }}
+              onCompositionStart={() => { composing.current = true; }}
+              onCompositionEnd={() => { composing.current = false; }}
+              onKeyDown={onKey}
+            />
             <div className="composer-row">
               <span className="hint">{busy ? "Esc or Stop to cancel" : "Enter to send · Shift+Enter for a new line"}</span>
               <span style={{ flex: 1 }} />
               {busy ? (
                 <button type="button" className="btn dc-stop" onClick={stop}><Square size={10} /> Stop</button>
               ) : (
-                <button type="submit" className="send" aria-label="Send" disabled={!draft.trim() || !proxyReady}><ArrowUp size={13} /></button>
+                <button type="submit" className="send" aria-label="Send" disabled={!draft.trim() || !proxyReady || blocked || creating}><ArrowUp size={13} /></button>
               )}
             </div>
           </form>
@@ -687,8 +866,6 @@ const PHASE_LABEL: Record<Phase, string> = {
   idle: "",
   recalling: "Checking relevant saved context",
   generating: "Generating",
-  reviewing: "Reviewing suggested facts",
-  saving: "Saving to Walrus Memory",
 };
 
 function PhaseLine({ phase }: { phase: Phase }) {
@@ -699,26 +876,56 @@ function PhaseLine({ phase }: { phase: Phase }) {
   );
 }
 
+const HISTORY_LABEL: Record<HistoryStatus["state"], string> = {
+  idle: "",
+  saving: "Saving…",
+  saved: "Saved",
+  failed: "Not saved",
+  temporary: "Temporary chat, not saved",
+};
+
+/** Chat history and Memory writes are separate states; neither borrows the other's "Saved". */
+export function StatusStrip({ history, writes }: { history: HistoryStatus; writes: Record<string, FactState> }) {
+  const values = Object.values(writes);
+  const pending = values.filter((state) => state === "saving").length;
+  const stored = values.filter((state) => state === "saved").length;
+  const failed = values.filter((state) => state === "failed" || state === "uncertain").length;
+  const memoryParts = [pending ? `${pending} pending` : "", stored ? `${stored} stored on Walrus` : "", failed ? `${failed} not stored` : ""].filter(Boolean);
+  if (history.state === "idle" && !memoryParts.length) return null;
+  return (
+    <p className="dc-muted dc-states" aria-live="polite">
+      {history.state !== "idle" ? (
+        <span data-testid="history-status" data-state={history.state}>
+          Chat history: {HISTORY_LABEL[history.state]}{history.state === "failed" ? ` (${history.message})` : ""}
+        </span>
+      ) : null}
+      {history.state !== "idle" && memoryParts.length ? " · " : null}
+      {memoryParts.length ? <span data-testid="memory-writes">Memory writes: {memoryParts.join(", ")}</span> : null}
+    </p>
+  );
+}
+
 interface AssistantViewProps {
   turn: AssistantTurn;
-  phase: Phase;
-  memoryReady: boolean;
+  canSuggest: boolean;
   onRetry: () => void;
   onContinueWithoutMemory: () => void;
+  onSuggest: () => void;
   onToggle: (factId: string, selected: boolean) => void;
   onEdit: (factId: string, text: string) => void;
   onSave: () => void;
 }
 
-function AssistantView({ turn, phase, onRetry, onContinueWithoutMemory, onToggle, onEdit, onSave }: AssistantViewProps) {
+function AssistantView({ turn, canSuggest, onRetry, onContinueWithoutMemory, onSuggest, onToggle, onEdit, onSave }: AssistantViewProps) {
   const memoryFailed = turn.error?.code === "memory_unavailable";
+  const extraction = turn.extraction;
   return (
     <li className="dc-assistant" data-status={turn.status}>
       <MemoryUsed memory={turn.memory} />
       {turn.content ? <div className="dc-reply"><ReplyText text={turn.content} />{turn.status === "streaming" ? <span className="dc-caret" aria-hidden /> : null}</div> : null}
       {turn.status === "streaming" && !turn.content ? <p className="dc-muted">{turn.memory?.state === "recalling" ? "Recalling Memory…" : "Waiting for the first words…"}</p> : null}
       {turn.status === "stopped" ? (
-        <p className="dc-muted">Stopped. The model request was cancelled; facts already saved to Walrus stay saved. <button type="button" className="link" onClick={onRetry}>Retry</button></p>
+        <p className="dc-muted">{turn.content ? "Interrupted. The partial reply above is kept in this chat" : "Stopped before any text arrived"}; facts already saved to Walrus stay saved. <button type="button" className="link" onClick={onRetry}>Retry</button></p>
       ) : null}
       {turn.status === "error" && turn.error ? (
         <div className="dc-error" role="alert">
@@ -734,8 +941,19 @@ function AssistantView({ turn, phase, onRetry, onContinueWithoutMemory, onToggle
         <p className="dc-muted" role="note">The reply reached the maximum output token limit, so it may be cut off. Thinking models spend part of this limit on reasoning; raise it under ZRouter → Advanced.</p>
       ) : null}
       {turn.status === "done" ? <Diagnostics turn={turn} /> : null}
-      {turn.suggestions?.length ? <Suggestions items={turn.suggestions} saving={phase === "saving"} onToggle={onToggle} onEdit={onEdit} onSave={onSave} /> : null}
-      {turn.suggestionNote ? <p className="dc-muted">{turn.suggestionNote}</p> : null}
+      {extraction?.state === "loading" ? <p className="dc-muted" data-testid="extraction-loading"><Loader2 size={11} className="spin" /> Looking for durable facts in your message…</p> : null}
+      {extraction?.state === "failed" ? (
+        <div className="dc-error" role="alert" data-testid="extraction-failed">
+          <p>Fact suggestions failed: {extraction.message}</p>
+          <p className="dc-muted">This is not the same as “no facts found”. Nothing was saved, and the reply above is unchanged.</p>
+          <div className="dc-row"><button type="button" className="btn" onClick={onSuggest}><RotateCcw size={12} /> Retry suggestions</button></div>
+        </div>
+      ) : null}
+      {turn.suggestions?.length ? <Suggestions items={turn.suggestions} onToggle={onToggle} onEdit={onEdit} onSave={onSave} /> : null}
+      {extraction?.state === "done" && !turn.suggestions?.length ? <p className="dc-muted">No durable facts were found in this message. Nothing was saved.</p> : null}
+      {turn.status === "done" && !extraction && canSuggest && turn.content.trim() ? (
+        <p className="dc-muted"><button type="button" className="link" onClick={onSuggest}>Suggest memories from this turn</button></p>
+      ) : null}
     </li>
   );
 }
@@ -931,7 +1149,6 @@ function HistoryRail({ projects, projectId, chats, conversationId, error, note, 
 
 interface SuggestionsProps {
   items: Suggestion[];
-  saving: boolean;
   onToggle: (factId: string, selected: boolean) => void;
   onEdit: (factId: string, text: string) => void;
   onSave: () => void;
@@ -945,7 +1162,7 @@ const STATE_LABEL: Record<FactState, string> = {
   uncertain: "Not confirmed",
 };
 
-function Suggestions({ items, saving, onToggle, onEdit, onSave }: SuggestionsProps) {
+function Suggestions({ items, onToggle, onEdit, onSave }: SuggestionsProps) {
   const savable = items.filter((item) => item.selected && (item.state === "suggested" || item.state === "failed" || item.state === "uncertain"));
   const retrying = savable.some((item) => item.state !== "suggested");
   return (
@@ -984,7 +1201,7 @@ function Suggestions({ items, saving, onToggle, onEdit, onSave }: SuggestionsPro
         ))}
       </ul>
       <div className="dc-row">
-        <button type="button" className="btn btn-primary" disabled={!savable.length || saving} onClick={onSave}>{retrying ? "Retry selected" : "Save selected"}</button>
+        <button type="button" className="btn btn-primary" disabled={!savable.length} onClick={onSave}>{retrying ? "Retry selected" : "Save selected"}</button>
         <span className="hint">Saved only after Walrus confirms storage. Keys, passwords and temporary instructions are never saved.</span>
       </div>
     </section>

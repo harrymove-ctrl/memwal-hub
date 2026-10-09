@@ -4,9 +4,11 @@ import {
   MessageCircle, Monitor, Moon, PanelLeft, Plus, Search, Settings2, Sparkles, Sun, LifeBuoy, User, Contrast,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { NavLink } from "react-router";
+import { NavLink, useNavigate } from "react-router";
 import { CATEGORIES, INTEGRATIONS } from "../data/fixtures";
 import authService from "@/services/auth";
+import { getAgentRevision, saveAgentRevision } from "../services/builder-agents";
+import { listProjects } from "../services/conversations";
 import { useStore } from "../state/store";
 import { useMemorySession, useModelProxyStatus } from "../state/integration-queries";
 import { AppIcon } from "./AppIcon";
@@ -23,6 +25,28 @@ export function Sidebar({ onNotice, mobileOpen, onCloseMobile, hidden }: { onNot
   const proxyReady = proxy.data?.status === "ready";
   const asideRef = useRef<HTMLElement>(null);
 
+  // One id list, joined so the effect re-runs only when agents are added or removed, never when a
+  // hydrated name or revision changes (that would loop through the dispatch below).
+  const serverAgentIds = state.agents
+    .filter((a) => a.id === "product-discovery" || /^[0-9a-f-]{36}$/i.test(a.id))
+    .map((a) => a.id)
+    .join(",");
+  useEffect(() => {
+    for (const agentId of serverAgentIds ? serverAgentIds.split(",") : []) {
+      void getAgentRevision(agentId)
+        .then((row) => {
+          dispatch({
+            type: "updateAgent",
+            agentId,
+            name: row.name,
+            revision: row.revision,
+            instructions: row.instructions,
+            projectId: row.project_id,
+          });
+        })
+        .catch(() => undefined);
+    }
+  }, [dispatch, serverAgentIds]);
   useEffect(() => {
     const open = () => setSettings(true);
     window.addEventListener("bew:open-settings", open);
@@ -69,9 +93,9 @@ export function Sidebar({ onNotice, mobileOpen, onCloseMobile, hidden }: { onNot
           <div className="sb-rule" />
           <div className="sb-group">
             <h2>Agents</h2>
-            <button className="icon-btn" aria-label="New agent" onClick={() => onNotice("Creating agents is not available in this demo.")}><Plus size={14} /></button>
+            <NewAgentButton onNotice={onNotice} />
           </div>
-          {state.agents.filter((a) => ["product-discovery", "research-companion", "meeting-follow-up", "knowledge-curator", "session-handoff"].includes(a.id)).map((a) => (
+          {state.agents.filter((a) => ["product-discovery", "research-companion", "meeting-follow-up", "knowledge-curator", "session-handoff"].includes(a.id) || /^[0-9a-f-]{36}$/i.test(a.id)).map((a) => (
             <NavLink key={a.id} to={`/builder/agents/${a.id}`} className="sb-item sb-agent">
               <span className="dot" aria-hidden /> {a.name}
               {state.drafts[a.id] ? <span className="sb-dirty" title="Unsaved changes" aria-label="unsaved changes">•</span> : null}
@@ -184,5 +208,76 @@ function ConnectAppPopover() {
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>
+  );
+}
+
+function NewAgentButton({ onNotice }: { onNotice: (message: string) => void }) {
+  const { state, dispatch } = useStore();
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [projectId, setProjectId] = useState("");
+  const [projects, setProjects] = useState<Array<{ id: string; name: string }>>([]);
+  const [pending, setPending] = useState(false);
+  const requestId = useRef<string | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    void listProjects().then((rows) => setProjects(rows)).catch(() => setProjects([]));
+  }, [open]);
+  const create = () => {
+    const template = state.agents.find((agent) => agent.id === "product-discovery");
+    const nextName = name.trim();
+    if (!template || !nextName || pending || (projects.length > 0 && !projectId)) return;
+    const id = crypto.randomUUID();
+    const request = requestId.current ?? crypto.randomUUID();
+    requestId.current = request;
+    setPending(true);
+    void saveAgentRevision({
+      agent_key: id,
+      name: nextName,
+      instructions: template.config.instructions,
+      request_id: request,
+      project_id: projectId || undefined,
+      tools: (template.config.tools ?? [])
+        .map((t) => t.technical || t.id)
+        .filter((t): t is "memwal_recall" | "memwal_remember" => t === "memwal_recall" || t === "memwal_remember"),
+    })
+      .then((res) => {
+        requestId.current = null;
+        const savedName = res.name ?? nextName;
+        const savedRevision = res.revision ?? 1;
+        dispatch({
+          type: "addAgent",
+          agent: {
+            ...template,
+            id,
+            name: savedName,
+            revision: savedRevision,
+            projectId: projectId || undefined,
+            config: {
+              ...template.config,
+              name: savedName,
+              instructions: res.instructions ?? template.config.instructions,
+            },
+          },
+        });
+        setOpen(false);
+        setName("");
+        navigate(`/builder/agents/${id}`);
+      })
+      .catch((error: unknown) => onNotice(error instanceof Error ? error.message : "The agent could not be created."))
+      .finally(() => setPending(false));
+  };
+  return open ? (
+    <form className="sb-item" onSubmit={(event) => { event.preventDefault(); create(); }}>
+      <input aria-label="Agent name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Agent name" disabled={pending} />
+      <select aria-label="Project" value={projectId} onChange={(event) => setProjectId(event.target.value)} disabled={pending}>
+        <option value="">{projects.length ? "Select a project" : "No project yet"}</option>
+        {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+      </select>
+      <button type="submit" disabled={pending || !name.trim() || (projects.length > 0 && !projectId)}>{pending ? "Creating…" : "Create"}</button>
+    </form>
+  ) : (
+    <button className="icon-btn" aria-label="New agent" type="button" onClick={() => setOpen(true)}><Plus size={14} /></button>
   );
 }

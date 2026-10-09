@@ -8,6 +8,7 @@ import { Component, useState, type ReactNode } from "react";
 
 import WalletProviders from "@/components/wallet-providers";
 import authService, { AuthServiceError } from "@/services/auth";
+import { clearStoredReturnPath, resolveReturnPath } from "@/utils/utils.return-path";
 
 import { AppIcon } from "./AppIcon";
 import { ModelProxyDialog } from "./ModelProxyDialog";
@@ -117,9 +118,14 @@ export function memoryDetail(session: MemorySession | undefined, error: unknown)
   if (!session) return "Loading Memory status.";
   if (!session.signedIn) return "Sign in to the workspace before connecting Memory.";
   const walrus = session.walrus;
-  if (walrus.status === "verified") return `Mainnet · namespace ${walrus.namespace} · verified by a signed relayer request`;
+  if (walrus.status === "verified") {
+    const accountNs = walrus.namespace
+      ? ` · Account connection namespace (not used for project chats): ${walrus.namespace}`
+      : "";
+    return `Mainnet · Each project has its own memory namespace (project/<id>)${accountNs} · verified by a signed relayer request`;
+  }
   if (walrus.configured) return memoryErrorLabel(walrus.lastErrorCode, walrus.lastError);
-  return "Connect a delegate key for this signed-in user. Recall never invents a memory.";
+  return "Connect a delegate key for this signed-in user. Each project has its own memory namespace (project/<id>).";
 }
 
 export function MemoryConnectDialog({ open, onClose }: DialogProps) {
@@ -207,7 +213,10 @@ function MemoryConnectForm({ onClose }: { onClose: () => void }) {
           <button type="button" className="btn" aria-expanded={advanced} onClick={() => setAdvanced((value) => !value)}>{advanced ? "Hide advanced" : "Advanced"}</button>
           {advanced ? (
             <div className="settings-split">
-              <label className="field">Namespace<input className="input" value={namespace} onChange={(event) => setNamespace(event.target.value)} spellCheck={false} /></label>
+              <label className="field">Account connection namespace (not used for project chats)
+                <input className="input" value={namespace} onChange={(event) => setNamespace(event.target.value)} spellCheck={false} />
+                <span className="hint">Project chats use per-project namespaces (project/&lt;id&gt;). This legacy account namespace is not used for project chats.</span>
+              </label>
               <label className="field">Environment
                 <select className="input" value="mainnet" disabled aria-describedby="memory-env-hint"><option value="mainnet">Mainnet</option></select>
                 <span className="hint" id="memory-env-hint">Only the Mainnet relayer is supported.</span>
@@ -258,7 +267,13 @@ function WalletSignIn() {
       const challenge = await authService.walletNonce(address);
       const signed = await signMessage({ message: new TextEncoder().encode(challenge.message) });
       await authService.walletLogin({ address, nonce: challenge.nonce, signature: signed.signature });
-      window.location.reload();
+      const returnTarget = resolveReturnPath();
+      if (returnTarget) {
+        clearStoredReturnPath();
+        window.location.assign(returnTarget);
+      } else {
+        window.location.reload();
+      }
     } catch (caught) {
       setError(caught instanceof AuthServiceError || caught instanceof Error ? caught.message : "Wallet sign-in failed.");
       setBusy(null);

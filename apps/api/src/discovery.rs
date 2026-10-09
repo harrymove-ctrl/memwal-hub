@@ -31,7 +31,23 @@ use crate::{
 };
 
 /// Recalled facts at or beyond this cosine distance are treated as irrelevant.
-pub(crate) const MAX_RECALL_DISTANCE: f64 = 0.85;
+///
+/// Empirical heuristic, not a guarantee. Measured on the relayer's recall for
+/// the QA run (`docs/memwal-chat-demo/recall-evaluation.md`): questions that
+/// genuinely concerned the saved project facts scored 0.29-0.656, while an
+/// unrelated general-knowledge question scored 0.722-0.752 on every stored
+/// fact. The previous 0.85 cut-off let all of those through. 0.70 sits in the
+/// observed gap, which is narrow (about 0.07), so a borderline paraphrase can
+/// still be missed and a borderline unrelated question can still match. The
+/// fixture test pins the observed behaviour; it does not prove the boundary.
+pub(crate) const MAX_RECALL_DISTANCE: f64 = 0.70;
+/// Output budget floor for fact extraction. Thinking models spend part of the
+/// completion budget on reasoning before they emit JSON (the QA model used 573
+/// of 600 tokens that way), so the connection's chat cap is raised to at least
+/// this for the extraction call only. 8192 is the largest cap the connection
+/// form accepts.
+const SUGGEST_MIN_TOKENS: i32 = 4096;
+const SUGGEST_MAX_TOKENS: i32 = 8192;
 const MAX_FACTS_IN_CONTEXT: usize = 6;
 const MAX_MESSAGES: usize = 40;
 const MAX_MESSAGE_CHARS: usize = 8_000;
@@ -59,9 +75,23 @@ pub struct ChatRequest {
     /// same for every model.
     #[serde(default)]
     pub model: Option<String>,
-    /// Selects the server-owned project namespace. Absent keeps the account connection namespace.
+    /// Selects the server-owned project namespace. Memory needs a project (or a
+    /// conversation that belongs to one); without it the request is refused.
     #[serde(default)]
     pub project_id: Option<Uuid>,
+    /// The saved conversation this turn belongs to. Its project is the memory
+    /// scope; a different `project_id` is rejected.
+    #[serde(default)]
+    pub conversation_id: Option<Uuid>,
+    /// Identifies the user turn already saved in `conversation_id`. Required with it.
+    #[serde(default)]
+    pub request_id: Option<String>,
+    /// When set, the saved instructions for this agent replace the default prompt.
+    #[serde(default)]
+    pub agent_key: Option<String>,
+    /// Exact revision to run. Absent means the newest saved revision, resolved once.
+    #[serde(default)]
+    pub agent_revision: Option<i32>,
 }
 
 fn default_true() -> bool {
@@ -149,9 +179,85 @@ pub fn looks_temporary(text: &str) -> bool {
         .any(|needle| lower.contains(needle))
 }
 
-/// Implemented recall policy: drop irrelevant (distance ≥ limit), secret-like
-/// and duplicate facts, order newest first, cap the count. Returns the kept
-/// facts and how many were dropped.
+/// How a recall query was built, so the disclosure can say exactly what was searched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecallPlan {
+    pub query: String,
+    /// True when the immediately preceding USER message was added because the
+    /// latest message is a short follow-up that cannot stand alone.
+    pub includes_previous_user_message: bool,
+}
+
+const FOLLOW_UP_MAX_WORDS: usize = 8;
+const MAX_QUERY_CHARS: usize = 1_000;
+/// Words that usually point back at an earlier message. A heuristic: it has
+/// false positives (a short, self-contained question containing "it") and
+/// false negatives (a follow-up phrased without any of these). The cost of a
+/// false positive is one extra earlier USER message in the search text; the
+/// distance filter below still decides what is injected.
+const FOLLOW_UP_MARKERS: &[&str] = &[
+    "it", "its", "that", "this", "those", "these", "they", "them", "their", "there", "above",
+    "earlier", "previous", "same", "again", "instead", "also", "too", "then",
+];
+const FOLLOW_UP_OPENERS: &[&str] = &["and", "but", "so", "why", "how", "what"];
+
+fn words_of(text: &str) -> Vec<String> {
+    text.split_whitespace()
+        .map(|word| {
+            word.trim_matches(|c: char| !c.is_alphanumeric())
+                .to_lowercase()
+        })
+        .filter(|word| !word.is_empty())
+        .collect()
+}
+
+/// Decides whether to search Walrus Memory for this turn and with what text.
+///
+/// * The query is the latest user message. Assistant text and older turns are
+///   never searched.
+/// * A short follow-up ("and what about that one?") also includes the single
+///   preceding user message, nothing further back.
+/// * A message with no words at all, or a single word with nothing before it,
+///   cannot be a meaningful search: retrieval is skipped (`None`).
+pub fn plan_recall(conversation: &[ChatMessage]) -> Option<RecallPlan> {
+    let last_index = conversation.iter().rposition(|m| m.role == "user")?;
+    let latest = conversation[last_index].content.trim();
+    let words = words_of(latest);
+    if words.is_empty() {
+        return None;
+    }
+    let previous = conversation[..last_index]
+        .iter()
+        .rev()
+        .find(|m| m.role == "user")
+        .map(|m| m.content.trim())
+        .filter(|text| !text.is_empty());
+    let looks_like_follow_up = words.len() <= FOLLOW_UP_MAX_WORDS
+        && (words.len() == 1
+            || words
+                .iter()
+                .any(|w| FOLLOW_UP_MARKERS.contains(&w.as_str()))
+            || FOLLOW_UP_OPENERS.contains(&words[0].as_str()));
+    if words.len() == 1 && previous.is_none() {
+        return None;
+    }
+    let (query, includes_previous) = match previous {
+        Some(previous) if looks_like_follow_up => (format!("{previous}\n{latest}"), true),
+        _ => (latest.to_owned(), false),
+    };
+    Some(RecallPlan {
+        query: query.chars().take(MAX_QUERY_CHARS).collect(),
+        includes_previous_user_message: includes_previous,
+    })
+}
+
+/// The relevance policy applied to recalled candidates. A fact is kept only if
+/// the relayer scored it below `max_distance`; a candidate with no score cannot
+/// be shown to be relevant and is dropped. Secret-like text and duplicates are
+/// dropped. The closest `MAX_FACTS_IN_CONTEXT` are kept (so the cap never
+/// discards the best match), then shown newest first so the newest statement
+/// wins when facts conflict. Nothing is added when no candidate qualifies.
+/// Returns the kept facts and how many candidates were dropped.
 pub fn filter_recalled(raw: Vec<RecalledFact>, max_distance: f64) -> (Vec<RecalledFact>, usize) {
     let total = raw.len();
     let mut kept: Vec<RecalledFact> = Vec::new();
@@ -162,7 +268,7 @@ pub fn filter_recalled(raw: Vec<RecalledFact>, max_distance: f64) -> (Vec<Recall
         }
         if fact
             .distance
-            .is_some_and(|distance| distance >= max_distance)
+            .is_none_or(|distance| distance >= max_distance)
         {
             continue;
         }
@@ -178,8 +284,13 @@ pub fn filter_recalled(raw: Vec<RecalledFact>, max_distance: f64) -> (Vec<Recall
             ..fact
         });
     }
-    kept.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    kept.sort_by(|a, b| {
+        a.distance
+            .partial_cmp(&b.distance)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     kept.truncate(MAX_FACTS_IN_CONTEXT);
+    kept.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     let dropped = total - kept.len();
     (kept, dropped)
 }
@@ -191,8 +302,17 @@ fn escape_context(text: &str) -> String {
 
 /// Builds the exact message array sent to the proxy: system prompt, optional
 /// recalled reference data, then the current conversation only.
+#[allow(dead_code)]
 pub fn build_model_messages(conversation: &[ChatMessage], facts: &[RecalledFact]) -> Vec<Value> {
-    let mut messages = vec![json!({ "role": "system", "content": SYSTEM_PROMPT })];
+    build_model_messages_with(SYSTEM_PROMPT, conversation, facts)
+}
+
+pub fn build_model_messages_with(
+    system: &str,
+    conversation: &[ChatMessage],
+    facts: &[RecalledFact],
+) -> Vec<Value> {
+    let mut messages = vec![json!({ "role": "system", "content": system })];
     if !facts.is_empty() {
         let lines: Vec<String> = facts
             .iter()
@@ -284,12 +404,13 @@ pub struct StreamOutcome {
 
 /// Relays a proxy event stream as `delta` events. Stops as soon as the
 /// receiver is gone and drops the upstream response so the proxy request is
-/// aborted too.
+/// aborted too. Production code uses [`pump_into`] so partial text survives an
+/// error; this wrapper exists for the stream tests.
+#[cfg(test)]
 pub async fn pump_stream(
-    mut upstream: reqwest::Response,
+    upstream: reqwest::Response,
     tx: &Sender,
 ) -> Result<StreamOutcome, ProxyError> {
-    let mut parser = SseParser::default();
     let mut outcome = StreamOutcome {
         text: String::new(),
         model_reported: None,
@@ -297,13 +418,25 @@ pub async fn pump_stream(
         usage: None,
         cancelled: false,
     };
+    pump_into(upstream, tx, &mut outcome).await?;
+    Ok(outcome)
+}
+
+/// Like [`pump_stream`] but writes into a caller-owned outcome, so text
+/// generated before an error or a disconnect is still available to the caller.
+pub async fn pump_into(
+    mut upstream: reqwest::Response,
+    tx: &Sender,
+    outcome: &mut StreamOutcome,
+) -> Result<(), ProxyError> {
+    let mut parser = SseParser::default();
     let mut saw_done = false;
     loop {
         let chunk = tokio::select! {
             chunk = tokio::time::timeout(STREAM_IDLE_LIMIT, upstream.chunk()) => chunk,
             () = tx.closed() => {
                 outcome.cancelled = true;
-                return Ok(outcome);
+                return Ok(());
             }
         };
         let chunk = match chunk {
@@ -342,7 +475,7 @@ pub async fn pump_stream(
                 outcome.text.push_str(delta);
                 if !emit(tx, "delta", json!({ "text": delta })).await {
                     outcome.cancelled = true;
-                    return Ok(outcome);
+                    return Ok(());
                 }
             }
         }
@@ -353,7 +486,7 @@ pub async fn pump_stream(
             "The stream ended before the reply finished.",
         ));
     }
-    Ok(outcome)
+    Ok(())
 }
 
 fn event_stream(rx: mpsc::Receiver<Result<Bytes, Infallible>>) -> Response {
@@ -425,6 +558,67 @@ pub async fn chat(
             message,
         );
     }
+    // Scope first, before the provider or Memory is touched. Memory-enabled
+    // chat needs a project the caller owns (directly or through the saved
+    // conversation); there is no account-wide fallback. A memory-off chat that
+    // names a project or conversation still has to own it.
+    let scope = if body.use_memory || body.project_id.is_some() || body.conversation_id.is_some() {
+        match crate::conversations::resolve_scope(
+            &state,
+            user_id,
+            body.project_id,
+            body.conversation_id,
+        )
+        .await
+        {
+            Ok(scope) => Some(scope),
+            Err(response) => return response,
+        }
+    } else {
+        None
+    };
+    let history_request = match (body.conversation_id, body.request_id.as_deref()) {
+        (Some(conversation_id), Some(request_id)) if !request_id.trim().is_empty() => {
+            Some((conversation_id, request_id.trim().to_owned()))
+        }
+        (Some(_), _) => {
+            return json_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "request_id_required",
+                "A saved conversation turn needs the request id of its saved user message.",
+            );
+        }
+        _ => None,
+    };
+    // The agent revision is resolved once, here. A save that lands after this
+    // point does not change this run.
+    let agent = match body
+        .agent_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+    {
+        Some(key) => {
+            match crate::agents::resolve(&state, user_id, key, body.agent_revision).await {
+                Ok(Some(agent)) => Some(agent),
+                Ok(None) => {
+                    return json_error(
+                        StatusCode::NOT_FOUND,
+                        "agent_not_found",
+                        "That agent or revision was not found, so nothing was run.",
+                    );
+                }
+                Err(()) => {
+                    return json_error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "backend_error",
+                        "The saved agent could not be read.",
+                    );
+                }
+            }
+        }
+        None => None,
+    };
     let proxy = match ready_proxy(&state, user_id).await {
         Ok(proxy) => proxy,
         Err(response) => return response,
@@ -441,9 +635,16 @@ pub async fn chat(
             "The model ID is not valid.",
         );
     }
-    let memory_settings = if body.use_memory {
+    let recall_allowed = agent
+        .as_ref()
+        .is_none_or(|agent| agent.allows("memwal_recall"));
+    let memory_settings = if body.use_memory && recall_allowed {
         match memory::load_settings(&state, user_id).await {
-            Ok(settings) => settings,
+            Ok(Some(settings)) => scope.as_ref().map(|scope| StoredWalrus {
+                namespace: scope.namespace.clone(),
+                ..settings
+            }),
+            Ok(None) => None,
             Err(_) => {
                 return json_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -455,26 +656,52 @@ pub async fn chat(
     } else {
         None
     };
-    let memory_settings = match memory_settings {
-        Some(settings) => match apply_project_scope(&state, user_id, body.project_id, settings).await {
-            Ok(settings) => Some(settings),
-            Err(response) => return response,
-        },
-        None => None,
+    let run = ChatRun {
+        user_id,
+        proxy,
+        body,
+        scope,
+        memory_settings,
+        agent,
+        history_request,
     };
     let (tx, rx) = mpsc::channel(64);
-    tokio::spawn(run_chat(state, user_id, proxy, body, memory_settings, tx));
+    tokio::spawn(run_chat(state, run, tx));
     event_stream(rx)
 }
 
-async fn run_chat(
-    state: AppState,
+struct ChatRun {
     user_id: Uuid,
     proxy: StoredProxy,
     body: ChatRequest,
+    scope: Option<crate::conversations::MemoryScope>,
     memory_settings: Option<StoredWalrus>,
-    tx: Sender,
-) {
+    agent: Option<crate::agents::ResolvedAgent>,
+    history_request: Option<(Uuid, String)>,
+}
+
+/// Keeps whatever was generated with the conversation it belongs to, even when
+/// the browser has gone away. Best effort by design: the browser also saves.
+async fn keep_reply(state: &AppState, run: &ChatRun, text: &str, status: &str) {
+    if let Some((conversation_id, request_id)) = &run.history_request
+        && crate::conversations::store_reply(
+            state,
+            run.user_id,
+            *conversation_id,
+            request_id,
+            text,
+            status,
+        )
+        .await
+        .is_err()
+    {
+        eprintln!("discovery chat: reply for conversation {conversation_id} could not be stored");
+    }
+}
+
+async fn run_chat(state: AppState, mut run: ChatRun, tx: Sender) {
+    let user_id = run.user_id;
+    let body = &run.body;
     // A per-conversation model replaces the saved one for this request only. Its
     // failures are reported in the chat but never change the saved connection's
     // status, so trying an unavailable model cannot take the default offline.
@@ -482,21 +709,39 @@ async fn run_chat(
         .model
         .as_deref()
         .map(str::trim)
-        .filter(|model| !model.is_empty() && *model != proxy.model_id)
+        .filter(|model| !model.is_empty() && *model != run.proxy.model_id)
         .map(str::to_owned);
-    let mut proxy = proxy;
+    let mut proxy = run.proxy.clone();
     if let Some(model) = &overridden {
         proxy.model_id = model.clone();
     }
-    // The recall query is the user's actual latest message.
-    let query = body
-        .messages
-        .last()
-        .map(|message| message.content.clone())
-        .unwrap_or_default();
     let mut facts = Vec::new();
-    if body.use_memory {
-        let settings = match memory_settings {
+    let recall_allowed = run
+        .agent
+        .as_ref()
+        .is_none_or(|agent| agent.allows("memwal_recall"));
+    if !body.use_memory {
+        if !emit(
+            &tx,
+            "memory",
+            json!({ "state": "off", "reason": "memory_off" }),
+        )
+        .await
+        {
+            return;
+        }
+    } else if !recall_allowed {
+        if !emit(
+            &tx,
+            "memory",
+            json!({ "state": "off", "reason": "agent_recall_disabled" }),
+        )
+        .await
+        {
+            return;
+        }
+    } else {
+        let settings = match run.memory_settings.take() {
             Some(settings) if settings.status == "verified" => settings,
             other => {
                 let code = if other.is_some() {
@@ -509,46 +754,74 @@ async fn run_chat(
                 return;
             }
         };
-        if !emit(&tx, "memory", json!({ "state": "recalling" })).await {
-            return;
-        }
-        match memory::sdk_recall(&settings, &query, 8).await {
-            Ok(hits) => {
-                let (kept, dropped) = filter_recalled(
-                    hits.into_iter().map(RecalledFact::from).collect(),
-                    MAX_RECALL_DISTANCE,
-                );
-                facts = kept;
-                let state_label = if facts.is_empty() { "none" } else { "included" };
+        let namespace = settings.namespace.clone();
+        match plan_recall(&body.messages) {
+            None => {
                 if !emit(&tx, "memory", json!({
-                    "state": state_label,
-                    "facts": facts,
-                    "filtered_out": dropped,
-                    "policy": format!("Dropped facts with distance ≥ {MAX_RECALL_DISTANCE}, secret-like text and duplicates; newest first; at most {MAX_FACTS_IN_CONTEXT}."),
-                    "query_characters": query.chars().count(),
-                }))
-                .await
-                {
+                    "state": "none",
+                    "reason": "nothing_to_search",
+                    "facts": [],
+                    "namespace": namespace,
+                    "policy": "The message has no usable search text, so Memory was not searched.",
+                })).await {
                     return;
                 }
             }
-            Err(error) => {
-                let _ = emit(
-                    &tx,
-                    "memory",
-                    json!({ "state": "failed", "code": error.code, "message": error.message }),
-                )
-                .await;
-                let _ = emit(&tx, "error", json!({ "code": "memory_unavailable", "message": "Walrus Memory could not be reached, so nothing was recalled. You can continue without Memory." })).await;
-                return;
+            Some(plan) => {
+                if !emit(&tx, "memory", json!({ "state": "recalling" })).await {
+                    return;
+                }
+                match memory::sdk_recall(&settings, &plan.query, 8).await {
+                    Ok(hits) => {
+                        let candidates = hits.len();
+                        let (kept, dropped) = filter_recalled(
+                            hits.into_iter().map(RecalledFact::from).collect(),
+                            MAX_RECALL_DISTANCE,
+                        );
+                        facts = kept;
+                        let state_label = if facts.is_empty() { "none" } else { "included" };
+                        if !emit(&tx, "memory", json!({
+                            "state": state_label,
+                            "facts": facts,
+                            "candidates": candidates,
+                            "filtered_out": dropped,
+                            "namespace": namespace,
+                            "policy": format!("Kept only facts closer than distance {MAX_RECALL_DISTANCE} (an empirical threshold), dropped secret-like text and duplicates; closest {MAX_FACTS_IN_CONTEXT} at most, shown newest first. Nothing is added when no fact qualifies."),
+                            "query_characters": plan.query.chars().count(),
+                            "includes_previous_user_message": plan.includes_previous_user_message,
+                        }))
+                        .await
+                        {
+                            return;
+                        }
+                    }
+                    Err(error) => {
+                        let _ = emit(
+                            &tx,
+                            "memory",
+                            json!({ "state": "failed", "code": error.code, "message": error.message }),
+                        )
+                        .await;
+                        let _ = emit(&tx, "error", json!({ "code": "memory_unavailable", "message": "Walrus Memory could not be reached, so nothing was recalled. You can continue without Memory." })).await;
+                        return;
+                    }
+                }
             }
         }
-    } else if !emit(&tx, "memory", json!({ "state": "off" })).await {
-        return;
     }
 
-    let messages = build_model_messages(&body.messages, &facts);
-    let shape = request_shape(&proxy.model_id, &messages, facts.len(), body.messages.len());
+    let system = run.agent.as_ref().map_or_else(
+        || SYSTEM_PROMPT.to_owned(),
+        |agent| agent.instructions.clone(),
+    );
+    let messages = build_model_messages_with(&system, &body.messages, &facts);
+    let mut shape = request_shape(&proxy.model_id, &messages, facts.len(), body.messages.len());
+    if let Some(agent) = &run.agent {
+        shape["agent"] = json!({ "key": agent.key, "revision": agent.revision, "name": agent.name, "tools": agent.tools });
+    }
+    if let Some(scope) = &run.scope {
+        shape["project_id"] = json!(scope.project_id);
+    }
     eprintln!("discovery chat request user={user_id} shape={shape}");
     if !emit(&tx, "request", shape).await {
         return;
@@ -572,14 +845,24 @@ async fn run_chat(
                     model_proxy::record_outcome(&state, user_id, Err(&error)).await;
                 }
                 let _ = emit(&tx, "error", proxy_error_event(&error)).await;
+                keep_reply(&state, &run, "", "error").await;
                 return;
             }
         };
-    match pump_stream(upstream, &tx).await {
-        Ok(outcome) if outcome.cancelled => {
+    let mut outcome = StreamOutcome {
+        text: String::new(),
+        model_reported: None,
+        finish_reason: None,
+        usage: None,
+        cancelled: false,
+    };
+    match pump_into(upstream, &tx, &mut outcome).await {
+        Ok(()) if outcome.cancelled => {
             eprintln!("discovery chat cancelled by the browser user={user_id}");
+            keep_reply(&state, &run, &outcome.text, "interrupted").await;
         }
-        Ok(outcome) => {
+        Ok(()) => {
+            keep_reply(&state, &run, &outcome.text, "complete").await;
             let _ = emit(
                 &tx,
                 "done",
@@ -593,6 +876,7 @@ async fn run_chat(
             .await;
         }
         Err(error) => {
+            keep_reply(&state, &run, &outcome.text, "error").await;
             let _ = emit(&tx, "error", proxy_error_event(&error)).await;
         }
     }
@@ -602,6 +886,16 @@ async fn run_chat(
 pub struct SuggestRequest {
     pub user_message: String,
     pub assistant_message: Option<String>,
+    /// Suggestions lead to Memory writes, so they need the same project scope.
+    #[serde(default)]
+    pub project_id: Option<Uuid>,
+    #[serde(default)]
+    pub conversation_id: Option<Uuid>,
+    /// The agent whose run produced the reply; its saved capabilities apply.
+    #[serde(default)]
+    pub agent_key: Option<String>,
+    #[serde(default)]
+    pub agent_revision: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -613,19 +907,36 @@ pub struct SuggestedFact {
 
 const SUGGEST_PROMPT: &str = "Extract durable product facts that the USER explicitly stated in their message, such as target audience, current priority, team capacity, constraints or decisions. Return only JSON in this exact shape: {\"facts\":[{\"text\":\"...\",\"category\":\"audience|priority|capacity|constraint|decision|preference|other\"}]}. Rules: at most 3 facts; each fact is one short standalone sentence that names the subject (for example 'The product targets solo developers.'); include only what the user stated, not the assistant's advice; never include credentials, keys, passwords, temporary instructions about this chat, or a copy of the conversation. If there are no durable facts, return {\"facts\":[]}.";
 
+/// Why an extraction attempt produced no usable answer. None of these is the
+/// same thing as "the model found no durable facts".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SuggestFailure {
+    /// The model hit its output cap (`finish_reason: length`) before finishing.
+    Truncated,
+    /// The model finished but returned nothing, or something that is not the requested JSON.
+    Invalid,
+}
+
 /// Parses the model's suggestion JSON and applies the save policy.
-pub fn parse_suggestions(raw: &str) -> (Vec<SuggestedFact>, usize) {
+///
+/// `Ok` with zero facts means the model returned a well-formed
+/// `{"facts": []}` (or every fact was rejected by the save policy). Text that
+/// is not the requested object is a failure, never an empty result.
+pub fn parse_suggestions(raw: &str) -> Result<(Vec<SuggestedFact>, usize), SuggestFailure> {
     let start = raw.find('{');
     let end = raw.rfind('}');
     let Some((start, end)) = start.zip(end).filter(|(start, end)| start < end) else {
-        return (Vec::new(), 0);
+        return Err(SuggestFailure::Invalid);
     };
     let Ok(value) = serde_json::from_str::<Value>(&raw[start..=end]) else {
-        return (Vec::new(), 0);
+        return Err(SuggestFailure::Invalid);
+    };
+    let Some(entries) = value["facts"].as_array() else {
+        return Err(SuggestFailure::Invalid);
     };
     let mut facts = Vec::new();
     let mut rejected = 0;
-    for entry in value["facts"].as_array().cloned().unwrap_or_default() {
+    for entry in entries.iter().cloned() {
         let Some(text) = entry["text"]
             .as_str()
             .map(str::trim)
@@ -668,7 +979,92 @@ pub fn parse_suggestions(raw: &str) -> (Vec<SuggestedFact>, usize) {
             category: category.to_owned(),
         });
     }
-    (facts, rejected)
+    Ok((facts, rejected))
+}
+
+/// Result of a successful extraction.
+#[derive(Debug)]
+pub struct Extraction {
+    pub facts: Vec<SuggestedFact>,
+    pub rejected: usize,
+    pub model_reported: Option<String>,
+    pub finish_reason: Option<String>,
+    pub attempts: u32,
+}
+
+#[derive(Debug)]
+pub enum ExtractionError {
+    Provider(ProxyError),
+    Failed {
+        reason: SuggestFailure,
+        finish_reason: Option<String>,
+        attempts: u32,
+    },
+}
+
+/// Extracts facts with a bounded retry. Extraction only reads: it writes
+/// nothing to Memory, so a retry cannot create a duplicate write. At most two
+/// provider calls are made, the second only when the first stopped on the
+/// output cap and a larger cap is still allowed. Malformed output, an empty
+/// reply and provider errors are reported, not retried, so cost stays bounded
+/// and a failure is never converted into "no facts".
+pub async fn extract_facts(
+    proxy: &StoredProxy,
+    user_message: &str,
+    assistant: &str,
+) -> Result<Extraction, ExtractionError> {
+    let mut cap = proxy
+        .max_output_tokens
+        .clamp(SUGGEST_MIN_TOKENS, SUGGEST_MAX_TOKENS);
+    let mut attempts = 0;
+    loop {
+        attempts += 1;
+        let request = json!({
+            "model": proxy.model_id,
+            "messages": [
+                { "role": "system", "content": SUGGEST_PROMPT },
+                { "role": "user", "content": format!("<user_message>\n{user_message}\n</user_message>\n<assistant_reply_for_context_only>\n{assistant}\n</assistant_reply_for_context_only>") },
+            ],
+            "max_tokens": cap,
+            "stream": false,
+        });
+        let value = model_proxy::complete(
+            &proxy.base_url,
+            &proxy.key,
+            &request,
+            allow_local_http(),
+            Duration::from_secs(90),
+        )
+        .await
+        .map_err(ExtractionError::Provider)?;
+        let finish_reason = model_proxy::completion_finish_reason(&value);
+        let model_reported = value["model"].as_str().map(str::to_owned);
+        if finish_reason.as_deref() == Some("length") {
+            if cap < SUGGEST_MAX_TOKENS && attempts < 2 {
+                cap = SUGGEST_MAX_TOKENS;
+                continue;
+            }
+            return Err(ExtractionError::Failed {
+                reason: SuggestFailure::Truncated,
+                finish_reason,
+                attempts,
+            });
+        }
+        return match parse_suggestions(&completion_text(&value)) {
+            Ok((facts, rejected)) => Ok(Extraction {
+                facts,
+                rejected,
+                model_reported,
+                finish_reason,
+                attempts,
+            }),
+            Err(reason) => Err(ExtractionError::Failed {
+                reason,
+                finish_reason,
+                attempts,
+            }),
+        };
+    }
 }
 
 pub async fn suggest(
@@ -692,6 +1088,22 @@ pub async fn suggest(
             "Suggestions need the user's message.",
         );
     }
+    if let Err(response) =
+        crate::conversations::resolve_scope(&state, user_id, body.project_id, body.conversation_id)
+            .await
+    {
+        return response;
+    }
+    if let Err(response) = agent_may_remember(
+        &state,
+        user_id,
+        body.agent_key.as_deref(),
+        body.agent_revision,
+    )
+    .await
+    {
+        return response;
+    }
     let proxy = match ready_proxy(&state, user_id).await {
         Ok(proxy) => proxy,
         Err(response) => return response,
@@ -702,34 +1114,53 @@ pub async fn suggest(
         .chars()
         .take(4000)
         .collect();
-    let request = json!({
-        "model": proxy.model_id,
-        "messages": [
-            { "role": "system", "content": SUGGEST_PROMPT },
-            { "role": "user", "content": format!("<user_message>\n{user_message}\n</user_message>\n<assistant_reply_for_context_only>\n{assistant}\n</assistant_reply_for_context_only>") },
-        ],
-        "max_tokens": 600,
-        "stream": false,
-    });
-    match model_proxy::complete(
-        &proxy.base_url,
-        &proxy.key,
-        &request,
-        allow_local_http(),
-        Duration::from_secs(60),
-    )
-    .await
-    {
-        Ok(value) => {
-            let (facts, rejected) = parse_suggestions(&completion_text(&value));
-            Json(json!({ "facts": facts, "rejected": rejected, "model_reported": value["model"] }))
+    // Extraction reuses the connection's own configured model. It never saves.
+    match extract_facts(&proxy, user_message, &assistant).await {
+        Ok(extraction) => Json(json!({
+            "status": "ok",
+            "facts": extraction.facts,
+            "rejected": extraction.rejected,
+            "model_reported": extraction.model_reported,
+            "finish_reason": extraction.finish_reason,
+            "attempts": extraction.attempts,
+        }))
+        .into_response(),
+        Err(ExtractionError::Provider(error)) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({
+                "code": error.code.as_str(),
+                "message": error.message(),
+                "retryable": true,
+            })),
+        )
+            .into_response(),
+        Err(ExtractionError::Failed {
+            reason,
+            finish_reason,
+            attempts,
+        }) => {
+            let (code, message) = match reason {
+                SuggestFailure::Truncated => (
+                    "extraction_truncated",
+                    "The model ran out of output budget before it finished suggesting facts. Nothing was saved. Try again, or raise the maximum output tokens in Integrations.",
+                ),
+                SuggestFailure::Invalid => (
+                    "extraction_invalid",
+                    "The model did not return facts in the expected format. Nothing was saved. Try again.",
+                ),
+            };
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({
+                    "code": code,
+                    "message": message,
+                    "retryable": true,
+                    "finish_reason": finish_reason,
+                    "attempts": attempts,
+                })),
+            )
                 .into_response()
         }
-        Err(error) => json_error(
-            StatusCode::BAD_GATEWAY,
-            error.code.as_str(),
-            error.message(),
-        ),
     }
 }
 
@@ -744,6 +1175,12 @@ pub struct SaveFactsRequest {
     pub facts: Vec<FactToSave>,
     #[serde(default)]
     pub project_id: Option<Uuid>,
+    #[serde(default)]
+    pub conversation_id: Option<Uuid>,
+    #[serde(default)]
+    pub agent_key: Option<String>,
+    #[serde(default)]
+    pub agent_revision: Option<i32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -772,18 +1209,6 @@ fn client_state(status: &str, blob_id: Option<&str>) -> &'static str {
     }
 }
 
-async fn apply_project_scope(
-    state: &AppState,
-    user_id: Uuid,
-    project_id: Option<Uuid>,
-    settings: StoredWalrus,
-) -> Result<StoredWalrus, Response> {
-    match crate::conversations::namespace_for(state, user_id, project_id).await? {
-        Some(namespace) => Ok(StoredWalrus { namespace, ..settings }),
-        None => Ok(settings),
-    }
-}
-
 async fn verified_memory(state: &AppState, user_id: Uuid) -> Result<StoredWalrus, Response> {
     match memory::load_settings(state, user_id).await {
         Ok(Some(settings)) if settings.status == "verified" => Ok(settings),
@@ -796,6 +1221,39 @@ async fn verified_memory(state: &AppState, user_id: Uuid) -> Result<StoredWalrus
             StatusCode::INTERNAL_SERVER_ERROR,
             "backend_error",
             "Walrus Memory settings could not be read.",
+        )),
+    }
+}
+
+/// Runtime capability check for a Memory write made on behalf of an agent run.
+/// A revision without `memwal_remember` cannot save, whichever endpoint is
+/// called; the check runs before any provider or Memory adapter call. A save
+/// that names no agent is the signed-in user's own reviewed action.
+pub(crate) async fn agent_may_remember(
+    state: &AppState,
+    user_id: Uuid,
+    agent_key: Option<&str>,
+    revision: Option<i32>,
+) -> Result<(), Response> {
+    let Some(key) = agent_key.map(str::trim).filter(|key| !key.is_empty()) else {
+        return Ok(());
+    };
+    match crate::agents::resolve(state, user_id, key, revision).await {
+        Ok(Some(agent)) if agent.allows("memwal_remember") => Ok(()),
+        Ok(Some(_)) => Err(json_error(
+            StatusCode::FORBIDDEN,
+            "capability_disabled",
+            "This agent revision does not allow saving to Memory. Nothing was written.",
+        )),
+        Ok(None) => Err(json_error(
+            StatusCode::NOT_FOUND,
+            "agent_not_found",
+            "That agent or revision was not found. Nothing was written.",
+        )),
+        Err(()) => Err(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "backend_error",
+            "The saved agent could not be read.",
         )),
     }
 }
@@ -828,12 +1286,34 @@ pub async fn save_facts(
             "Select between 1 and 10 facts.",
         );
     }
-    let mut settings = match verified_memory(&state, user_id).await {
-        Ok(settings) => settings,
+    // Scope is resolved first. With no project (or one the caller does not own)
+    // nothing below runs: no settings read, no Memory adapter call, no job row.
+    let scope = match crate::conversations::resolve_scope(
+        &state,
+        user_id,
+        body.project_id,
+        body.conversation_id,
+    )
+    .await
+    {
+        Ok(scope) => scope,
         Err(response) => return response,
     };
-    settings = match apply_project_scope(&state, user_id, body.project_id, settings).await {
-        Ok(settings) => settings,
+    if let Err(response) = agent_may_remember(
+        &state,
+        user_id,
+        body.agent_key.as_deref(),
+        body.agent_revision,
+    )
+    .await
+    {
+        return response;
+    }
+    let settings = match verified_memory(&state, user_id).await {
+        Ok(settings) => StoredWalrus {
+            namespace: scope.namespace.clone(),
+            ..settings
+        },
         Err(response) => return response,
     };
     let mut jobs = Vec::new();
@@ -967,6 +1447,10 @@ pub async fn save_facts(
 #[derive(Debug, Deserialize)]
 pub struct FactStatusRequest {
     pub client_ids: Vec<Uuid>,
+    #[serde(default)]
+    pub project_id: Option<Uuid>,
+    #[serde(default)]
+    pub conversation_id: Option<Uuid>,
 }
 
 pub async fn fact_status(
@@ -989,6 +1473,19 @@ pub async fn fact_status(
             "Ask for between 1 and 20 facts.",
         );
     }
+    // Job status is project-scoped like every other memory operation: a status
+    // check without an owned project reads nothing and calls no adapter.
+    let scope = match crate::conversations::resolve_scope(
+        &state,
+        user_id,
+        body.project_id,
+        body.conversation_id,
+    )
+    .await
+    {
+        Ok(scope) => scope,
+        Err(response) => return response,
+    };
     let keys: Vec<String> = body.client_ids.iter().map(Uuid::to_string).collect();
     let rows = sqlx::query_as::<
         _,
@@ -1001,10 +1498,11 @@ pub async fn fact_status(
         ),
     >(
         "SELECT idempotency_key, status, job_id, blob_id, error FROM memory_write_jobs
-         WHERE user_id = $1 AND idempotency_key = ANY($2)",
+         WHERE user_id = $1 AND idempotency_key = ANY($2) AND namespace = $3",
     )
     .bind(user_id)
     .bind(&keys)
+    .bind(&scope.namespace)
     .fetch_all(&state.pool)
     .await;
     let mut rows = match rows {
@@ -1026,7 +1524,10 @@ pub async fn fact_status(
         .collect();
     if !open.is_empty() {
         let settings = match verified_memory(&state, user_id).await {
-            Ok(settings) => settings,
+            Ok(settings) => StoredWalrus {
+                namespace: scope.namespace.clone(),
+                ..settings
+            },
             Err(response) => return response,
         };
         match memory::sdk_remember_status(&settings, &open).await {
@@ -1103,11 +1604,11 @@ mod tests {
     use tokio::{net::TcpListener, sync::mpsc};
 
     use super::{
-        ChatMessage, MAX_RECALL_DISTANCE, RecalledFact, build_model_messages, client_state,
-        filter_recalled, looks_secret, looks_temporary, parse_suggestions, pump_stream,
-        request_shape, validate_conversation,
+        ChatMessage, MAX_RECALL_DISTANCE, RecalledFact, SuggestFailure, build_model_messages,
+        client_state, filter_recalled, looks_secret, looks_temporary, parse_suggestions,
+        plan_recall, pump_stream, request_shape, validate_conversation,
     };
-    use crate::model_proxy::{self, ProxyErrorCode};
+    use crate::model_proxy::{self, ProxyErrorCode, StoredProxy};
 
     fn fact(text: &str, distance: f64, created_at: &str) -> RecalledFact {
         RecalledFact {
@@ -1196,6 +1697,138 @@ mod tests {
     }
 
     #[test]
+    fn an_unscored_candidate_is_never_assumed_relevant_and_the_cap_keeps_the_closest() {
+        let mut unscored = fact("A fact with no score.", 0.0, "2026-10-08T12:00:00Z");
+        unscored.distance = None;
+        let (kept, dropped) = filter_recalled(vec![unscored], MAX_RECALL_DISTANCE);
+        assert!(kept.is_empty());
+        assert_eq!(dropped, 1);
+
+        // Seven qualifying facts: the newest one is also the weakest match, and
+        // it is the one the cap removes, not the closest.
+        let mut raw: Vec<RecalledFact> = (0..6)
+            .map(|index| {
+                fact(
+                    &format!("Close fact {index}."),
+                    0.2 + f64::from(index) * 0.01,
+                    &format!("2026-10-08T0{index}:00:00Z"),
+                )
+            })
+            .collect();
+        raw.push(fact(
+            "Newest but weakest match.",
+            0.69,
+            "2026-10-08T23:00:00Z",
+        ));
+        let (kept, _) = filter_recalled(raw, MAX_RECALL_DISTANCE);
+        assert_eq!(kept.len(), 6);
+        assert!(
+            !kept
+                .iter()
+                .any(|fact| fact.text.starts_with("Newest but weakest"))
+        );
+    }
+
+    /// Observed relayer distances from the independent QA run (see
+    /// docs/memwal-chat-demo/recall-evaluation.md). Each row is one question
+    /// against the four stored LaunchLens facts. The fixture pins what the
+    /// policy does with those observations; it does not prove the boundary
+    /// holds for other questions or other embeddings.
+    #[test]
+    fn recall_policy_matches_the_observed_qa_distances() {
+        struct Case {
+            question: &'static str,
+            distances: [f64; 4],
+            expected_kept: usize,
+        }
+        let cases = [
+            Case {
+                question: "paraphrase: should we build team workspaces next?",
+                distances: [0.291, 0.521, 0.544, 0.617],
+                expected_kept: 4,
+            },
+            Case {
+                question: "correction: how many engineers now?",
+                distances: [0.286, 0.544, 0.546, 0.639],
+                expected_kept: 4,
+            },
+            Case {
+                question: "follow-up recall in a new chat",
+                distances: [0.368, 0.407, 0.422, 0.452],
+                expected_kept: 4,
+            },
+            Case {
+                question: "weakest relevant answer seen",
+                distances: [0.656, 0.464, 0.452, 0.422],
+                expected_kept: 4,
+            },
+            Case {
+                question: "unrelated: capital of France?",
+                distances: [0.722, 0.732, 0.739, 0.752],
+                expected_kept: 0,
+            },
+        ];
+        for case in cases {
+            let raw = case
+                .distances
+                .iter()
+                .enumerate()
+                .map(|(index, distance)| {
+                    fact(
+                        &format!("Stored fact {index}."),
+                        *distance,
+                        &format!("2026-10-09T0{index}:00:00Z"),
+                    )
+                })
+                .collect();
+            let (kept, _) = filter_recalled(raw, MAX_RECALL_DISTANCE);
+            assert_eq!(kept.len(), case.expected_kept, "{}", case.question);
+        }
+    }
+
+    #[test]
+    fn recall_plan_searches_the_latest_user_message_and_only_borrows_one_earlier_user_turn_for_follow_ups()
+     {
+        let turn = |role: &str, text: &str| ChatMessage {
+            role: role.into(),
+            content: text.into(),
+        };
+        // Standalone question: only its own text, no earlier turns, no assistant text.
+        let plan = plan_recall(&[
+            turn("user", "Tell me about our pricing."),
+            turn("assistant", "Pricing depends on the segment."),
+            turn("user", "Should we prioritize shared team workspaces next?"),
+        ])
+        .unwrap();
+        assert_eq!(
+            plan.query,
+            "Should we prioritize shared team workspaces next?"
+        );
+        assert!(!plan.includes_previous_user_message);
+        assert!(!plan.query.contains("Pricing depends"));
+
+        // Short follow-up: one earlier USER message is added, never the assistant's reply.
+        let plan = plan_recall(&[
+            turn("user", "Should we build team workspaces?"),
+            turn("assistant", "Probably not yet."),
+            turn("user", "and what about that for enterprise?"),
+        ])
+        .unwrap();
+        assert!(plan.includes_previous_user_message);
+        assert!(plan.query.starts_with("Should we build team workspaces?"));
+        assert!(!plan.query.contains("Probably not yet"));
+
+        // An unrelated first message in a new chat has nothing to borrow.
+        let plan = plan_recall(&[turn("user", "What is the capital of France?")]).unwrap();
+        assert_eq!(plan.query, "What is the capital of France?");
+        assert!(!plan.includes_previous_user_message);
+
+        // A lone word with nothing before it is not a usable search.
+        assert!(plan_recall(&[turn("user", "ok")]).is_none());
+        assert!(plan_recall(&[turn("user", "   ")]).is_none());
+    }
+
+    #[test]
     fn secrets_and_temporary_instructions_are_detected() {
         assert!(looks_secret("my key is zr_live_abcdef"));
         assert!(looks_secret(&"a".repeat(64)));
@@ -1208,11 +1841,35 @@ mod tests {
     #[test]
     fn suggestions_are_parsed_and_filtered() {
         let raw = "```json\n{\"facts\":[{\"text\":\"The product targets solo developers.\",\"category\":\"audience\"},{\"text\":\"The next release focuses on onboarding.\",\"category\":\"priority\"},{\"text\":\"The team has two engineers.\",\"category\":\"capacity\"},{\"text\":\"Use password abc\",\"category\":\"other\"}]}\n```";
-        let (facts, rejected) = parse_suggestions(raw);
+        let (facts, rejected) = parse_suggestions(raw).unwrap();
         assert_eq!(facts.len(), 3);
         assert_eq!(rejected, 1);
         assert_eq!(facts[2].category, "capacity");
-        assert_eq!(parse_suggestions("no json here").0.len(), 0);
+    }
+
+    #[test]
+    fn an_empty_facts_list_is_a_valid_answer_but_text_without_json_is_a_failure() {
+        let (facts, rejected) = parse_suggestions("{\"facts\":[]}").unwrap();
+        assert!(facts.is_empty());
+        assert_eq!(rejected, 0);
+        assert_eq!(
+            parse_suggestions("no json here"),
+            Err(SuggestFailure::Invalid)
+        );
+        assert_eq!(parse_suggestions(""), Err(SuggestFailure::Invalid));
+        assert_eq!(
+            parse_suggestions("{\"facts\":"),
+            Err(SuggestFailure::Invalid)
+        );
+        assert_eq!(
+            parse_suggestions("{\"other\":1}"),
+            Err(SuggestFailure::Invalid)
+        );
+        // Every fact rejected by the save policy is still a well-formed answer.
+        let (facts, rejected) =
+            parse_suggestions("{\"facts\":[{\"text\":\"my password is hunter2\"}]}").unwrap();
+        assert!(facts.is_empty());
+        assert_eq!(rejected, 1);
     }
 
     #[test]
@@ -1267,6 +1924,171 @@ mod tests {
             .header("content-type", "text/event-stream")
             .body(Body::from_stream(stream))
             .unwrap()
+    }
+
+    // ---- Extraction against a mock provider ----
+
+    fn proxy_for(base: &str, cap: i32) -> StoredProxy {
+        // SAFETY: tests only; the mock listens on loopback.
+        unsafe { std::env::set_var("MODEL_PROXY_ALLOW_LOCAL_HTTP", "true") };
+        StoredProxy {
+            base_url: base.to_owned(),
+            model_id: "mock-thinking".to_owned(),
+            key: "test-key".to_owned(),
+            max_output_tokens: cap,
+            temperature: None,
+            status: "ready".to_owned(),
+        }
+    }
+
+    type Caps = Arc<std::sync::Mutex<Vec<i64>>>;
+
+    /// A provider whose replies are scripted per call; records each request's max_tokens.
+    async fn scripted(replies: Vec<Response>) -> (String, Caps) {
+        let caps: Caps = Arc::default();
+        let queue = Arc::new(std::sync::Mutex::new(
+            replies
+                .into_iter()
+                .collect::<std::collections::VecDeque<_>>(),
+        ));
+        let seen = caps.clone();
+        let base = mock_proxy(Router::new().route(
+            "/v1/chat/completions",
+            post(move |Json(body): Json<Value>| {
+                let queue = queue.clone();
+                let seen = seen.clone();
+                async move {
+                    seen.lock()
+                        .unwrap()
+                        .push(body["max_tokens"].as_i64().unwrap_or(-1));
+                    queue
+                        .lock()
+                        .unwrap()
+                        .pop_front()
+                        .expect("unexpected extra provider call")
+                }
+            }),
+        ))
+        .await;
+        (base, caps)
+    }
+
+    fn completion(content: &str, finish: &str) -> Response {
+        Json(json!({
+            "model": "mock-thinking-1",
+            "choices": [{ "message": { "role": "assistant", "content": content }, "finish_reason": finish }],
+        }))
+        .into_response()
+    }
+
+    #[tokio::test]
+    async fn extraction_returns_editable_facts_from_a_normal_reply() {
+        let (base, caps) = scripted(vec![completion(
+            "{\"facts\":[{\"text\":\"LaunchLens serves solo SaaS founders.\",\"category\":\"audience\"}]}",
+            "stop",
+        )])
+        .await;
+        let result =
+            super::extract_facts(&proxy_for(&base, 800), "We serve solo founders.", "Noted.")
+                .await
+                .unwrap();
+        assert_eq!(result.facts.len(), 1);
+        assert_eq!(result.attempts, 1);
+        assert_eq!(result.finish_reason.as_deref(), Some("stop"));
+        // The old fixed 600-token cap is gone: a reasoning model needs room before the JSON.
+        assert!(
+            caps.lock().unwrap()[0] >= 4096,
+            "{:?}",
+            caps.lock().unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_well_formed_empty_answer_is_ok_and_empty() {
+        let (base, _) = scripted(vec![completion("{\"facts\":[]}", "stop")]).await;
+        let result = super::extract_facts(&proxy_for(&base, 800), "hello", "hi")
+            .await
+            .unwrap();
+        assert!(result.facts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn truncation_retries_once_with_a_larger_cap_then_succeeds() {
+        let (base, caps) = scripted(vec![
+            completion("```json\n{\"facts\":[{\"text\":\"Launch", "length"),
+            completion("{\"facts\":[{\"text\":\"The priority is onboarding.\",\"category\":\"priority\"}]}", "stop"),
+        ])
+        .await;
+        let result = super::extract_facts(&proxy_for(&base, 2048), "Priority is onboarding.", "ok")
+            .await
+            .unwrap();
+        assert_eq!(result.facts.len(), 1);
+        assert_eq!(result.attempts, 2);
+        let caps = caps.lock().unwrap();
+        assert_eq!(caps.len(), 2, "at most two provider calls");
+        assert!(caps[1] > caps[0]);
+    }
+
+    #[tokio::test]
+    async fn persistent_truncation_is_a_failure_not_no_facts_and_is_bounded() {
+        let (base, caps) = scripted(vec![
+            completion("{\"facts\":[{\"te", "length"),
+            completion("{\"facts\":[{\"te", "length"),
+        ])
+        .await;
+        let error = super::extract_facts(&proxy_for(&base, 2048), "x y z", "ok")
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            super::ExtractionError::Failed {
+                reason: SuggestFailure::Truncated,
+                attempts: 2,
+                ..
+            }
+        ));
+        assert_eq!(caps.lock().unwrap().len(), 2, "never more than two calls");
+    }
+
+    #[tokio::test]
+    async fn malformed_and_empty_replies_are_failures_and_are_not_retried() {
+        for reply in ["Sure! Here are the facts you asked for.", ""] {
+            let (base, caps) = scripted(vec![completion(reply, "stop")]).await;
+            let error = super::extract_facts(&proxy_for(&base, 800), "hello", "hi")
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(
+                    error,
+                    super::ExtractionError::Failed {
+                        reason: SuggestFailure::Invalid,
+                        attempts: 1,
+                        ..
+                    }
+                ),
+                "{reply:?}: {error:?}"
+            );
+            assert_eq!(caps.lock().unwrap().len(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_provider_error_is_reported_as_a_provider_error() {
+        let (base, _) = scripted(vec![
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"error": {"message": "no eligible provider account"}})),
+            )
+                .into_response(),
+        ])
+        .await;
+        let error = super::extract_facts(&proxy_for(&base, 800), "hello", "hi")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, super::ExtractionError::Provider(_)),
+            "{error:?}"
+        );
     }
 
     #[tokio::test]
@@ -1494,3 +2316,7 @@ mod tests {
 #[cfg(all(test, feature = "database-tests"))]
 #[path = "discovery_database_tests.rs"]
 mod database_tests;
+
+#[cfg(all(test, feature = "database-tests"))]
+#[path = "qa_database_tests.rs"]
+mod qa_database_tests;

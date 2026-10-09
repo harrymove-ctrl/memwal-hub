@@ -1,6 +1,8 @@
 import { Blocks, CircleCheck, LayoutGrid, MessageSquarePlus, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-
+import { useSearchParams } from "react-router";
+import { setStoredReturnPath } from "@/utils/utils.return-path";
+import { canonicalSetupPath, paramsAfterClose, setupTarget } from "./setup-params";
 import agentConnectionsService, { AgentConnectionServiceError, type AgentConnection } from "@/services/agent-connections";
 
 import { OpenSidebarButton, type ShellCtx } from "../App";
@@ -22,8 +24,12 @@ const PROVIDER: Record<string, "claude" | "chatgpt"> = { claude: "claude", gpt: 
 export function IntegrationsPage({ ctx }: { ctx: ShellCtx }) {
   const [filter, setFilter] = useState<Filter>({ kind: "all" });
   const [q, setQ] = useState("");
-  const [memoryOpen, setMemoryOpen] = useState(false);
-  const [proxyOpen, setProxyOpen] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const target = setupTarget(searchParams);
+  const [memoryManualOpen, setMemoryOpen] = useState(false);
+  const [proxyManualOpen, setProxyOpen] = useState(false);
+  const proxyOpen = proxyManualOpen || target === "model";
+  const memoryOpen = memoryManualOpen || target === "memory";
   const [callback, setCallback] = useState("");
   const [pending, setPending] = useState<AgentConnection | null>(null);
   const memory = useMemorySession();
@@ -40,6 +46,26 @@ export function IntegrationsPage({ ctx }: { ctx: ShellCtx }) {
     void agentConnectionsService.list().then((next) => { if (live) setConnections(next); }).catch(() => { if (live) setConnections([]); });
     return () => { live = false; poll.current += 1; };
   }, []);
+
+  useEffect(() => {
+    if (target) setStoredReturnPath(canonicalSetupPath(target));
+  }, [target]);
+
+  function closeSetup(which: "model" | "memory") {
+    if (which === "model") setProxyOpen(false);
+    else setMemoryOpen(false);
+    if (setupTarget(searchParams) === which) {
+      setSearchParams(paramsAfterClose(searchParams, which), { replace: true });
+    }
+  }
+
+  function continueToMemory() {
+    setProxyOpen(false);
+    const next = paramsAfterClose(searchParams, "model");
+    if (next.get("setup") === "memory") next.delete("setup");
+    next.set("connect", "memory");
+    setSearchParams(next);
+  }
 
   const statusOf = (id: string): RowState => {
     if (id === "console" || id === "github") return "unavailable";
@@ -264,8 +290,8 @@ export function IntegrationsPage({ ctx }: { ctx: ShellCtx }) {
           {sections.length === 0 ? <p className="empty">No integrations match.</p> : null}
         </div>
       </div>
-      <MemoryConnectDialog open={memoryOpen} onClose={() => setMemoryOpen(false)} />
-      <ModelProxyDialog open={proxyOpen} onClose={() => setProxyOpen(false)} />
+      <MemoryConnectDialog open={memoryOpen} onClose={() => closeSetup("memory")} />
+      <ModelProxyDialog open={proxyOpen} onClose={() => closeSetup("model")} onContinueToMemory={continueToMemory} />
     </>
   );
 }

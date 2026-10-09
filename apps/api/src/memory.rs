@@ -49,25 +49,6 @@ pub struct SaveWalrus {
     pub network: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct RecallQuery {
-    pub query: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct MemoryHit {
-    pub text: String,
-    pub blob_id: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct MemoryRecall {
-    pub address: String,
-    pub status: String,
-    pub detail: String,
-    pub memories: Vec<MemoryHit>,
-}
-
 /// A Walrus Memory failure, already classified by the SDK bridge.
 #[derive(Debug, Clone)]
 pub(crate) struct SdkError {
@@ -90,7 +71,6 @@ pub(crate) struct StoredWalrus {
     pub namespace: String,
     pub key: String,
     pub status: String,
-    pub last_error: Option<String>,
 }
 
 pub(crate) fn json_error(status: StatusCode, code: &str, message: impl Into<String>) -> Response {
@@ -291,7 +271,6 @@ pub async fn save(
         namespace: namespace.clone(),
         key,
         status: "key_stored".to_owned(),
-        last_error: None,
     };
     let verified = run_sdk(&settings, "verify", json!({}), Duration::from_secs(30)).await;
     let (status, error_code, last_error, owner) = match &verified {
@@ -386,163 +365,10 @@ pub async fn clear(
     Ok(Json(walrus_status(&state, Some(user_id)).await?))
 }
 
-/// Recalls with the caller's own query. There is no fixed fallback question.
-pub async fn recall(
-    State(state): State<AppState>,
-    jar: CookieJar,
-    Json(payload): Json<RecallQuery>,
-) -> Result<(StatusCode, Json<MemoryRecall>), ApiError> {
-    let Some(user_id) = optional_authenticated_user_id(&state, &jar).await? else {
-        return Err(ApiError::Unauthorized);
-    };
-    let address = wallet_address(&state, user_id).await?.unwrap_or_default();
-    let Some(query) = payload
-        .query
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return Err(ApiError::Validation(
-            "Recall needs the user's question as its query.",
-        ));
-    };
-    let Some(settings) = load_settings(&state, user_id).await? else {
-        return Ok((
-            StatusCode::OK,
-            Json(MemoryRecall {
-                address,
-                status: "not_connected".to_owned(),
-                detail: "Walrus Memory is not connected for this user.".to_owned(),
-                memories: Vec::new(),
-            }),
-        ));
-    };
-    if settings.status != "verified" {
-        return Ok((
-            StatusCode::OK,
-            Json(MemoryRecall {
-                address,
-                status: "requires_reconnect".to_owned(),
-                detail: settings
-                    .last_error
-                    .unwrap_or_else(|| "The delegate key is stored but not verified.".to_owned()),
-                memories: Vec::new(),
-            }),
-        ));
-    }
-    match sdk_recall(&settings, query, 8).await {
-        Ok(hits) => Ok((
-            StatusCode::OK,
-            Json(MemoryRecall {
-                address,
-                status: "recalled".to_owned(),
-                detail: format!("Recalled {} memories.", hits.len()),
-                memories: hits
-                    .into_iter()
-                    .map(|hit| MemoryHit {
-                        text: hit.text,
-                        blob_id: hit.blob_id,
-                    })
-                    .collect(),
-            }),
-        )),
-        Err(error) => Ok((
-            StatusCode::BAD_GATEWAY,
-            Json(MemoryRecall {
-                address,
-                status: error.code,
-                detail: error.message,
-                memories: Vec::new(),
-            }),
-        )),
-    }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RememberBody {
-    pub text: String,
-}
-
 #[derive(Debug, Serialize)]
 pub struct SaveAttempt {
     pub status: String,
     pub detail: String,
-}
-
-/// Legacy single-fact save used by the example discovery flow. It reports
-/// `saved` only after the relayer job reaches `done` with a blob ID.
-pub async fn remember(
-    State(state): State<AppState>,
-    jar: CookieJar,
-    Json(body): Json<RememberBody>,
-) -> Result<Json<SaveAttempt>, ApiError> {
-    let Some(user_id) = optional_authenticated_user_id(&state, &jar).await? else {
-        return Ok(Json(SaveAttempt {
-            status: "failed".into(),
-            detail: "Sign in before saving a finding.".into(),
-        }));
-    };
-    let text = body.text.trim();
-    if text.is_empty() {
-        return Ok(Json(SaveAttempt {
-            status: "failed".into(),
-            detail: "Nothing was approved to save.".into(),
-        }));
-    }
-    let Some(settings) = load_settings(&state, user_id).await? else {
-        return Ok(Json(SaveAttempt {
-            status: "failed".into(),
-            detail: "Walrus Memory is not connected. No fact was written.".into(),
-        }));
-    };
-    if settings.status != "verified" {
-        return Ok(Json(SaveAttempt {
-            status: "failed".into(),
-            detail: "Walrus Memory needs reconnect. No fact was written.".into(),
-        }));
-    }
-    let key = Uuid::new_v4().to_string();
-    let job = match sdk_remember_submit(&settings, text, &key).await {
-        Ok(job) => job,
-        Err(error) => {
-            return Ok(Json(SaveAttempt {
-                status: "failed".into(),
-                detail: error.message,
-            }));
-        }
-    };
-    for _ in 0..40 {
-        tokio::time::sleep(Duration::from_millis(1500)).await;
-        if let Ok(jobs) = sdk_remember_status(&settings, std::slice::from_ref(&job)).await
-            && let Some(current) = jobs.first()
-        {
-            match current.status.as_str() {
-                "done" if current.blob_id.is_some() => {
-                    return Ok(Json(SaveAttempt {
-                        status: "saved".into(),
-                        detail: format!(
-                            "Stored on Walrus Mainnet as blob {}.",
-                            current.blob_id.clone().unwrap_or_default()
-                        ),
-                    }));
-                }
-                "failed" | "not_found" => {
-                    return Ok(Json(SaveAttempt {
-                        status: "failed".into(),
-                        detail: current
-                            .error
-                            .clone()
-                            .unwrap_or_else(|| "The relayer reported the write as failed.".into()),
-                    }));
-                }
-                _ => {}
-            }
-        }
-    }
-    Ok(Json(SaveAttempt {
-        status: "pending".into(),
-        detail: format!("Accepted as job {job}, but storage completion was not confirmed yet."),
-    }))
 }
 
 pub async fn console_report() -> Json<SaveAttempt> {
@@ -755,9 +581,9 @@ pub(crate) async fn load_settings(
     state: &AppState,
     user_id: Uuid,
 ) -> Result<Option<StoredWalrus>, ApiError> {
-    let Some((account_id, server_url, namespace, ciphertext, nonce, status, last_error)) =
-        sqlx::query_as::<_, (String, String, String, Vec<u8>, Vec<u8>, String, Option<String>)>(
-            "SELECT account_id, server_url, namespace, key_ciphertext, key_nonce, status, last_error
+    let Some((account_id, server_url, namespace, ciphertext, nonce, status)) =
+        sqlx::query_as::<_, (String, String, String, Vec<u8>, Vec<u8>, String)>(
+            "SELECT account_id, server_url, namespace, key_ciphertext, key_nonce, status
              FROM storage_connections WHERE user_id = $1 AND provider = 'walrus_memory'",
         )
         .bind(user_id)
@@ -774,7 +600,6 @@ pub(crate) async fn load_settings(
         namespace,
         key,
         status,
-        last_error,
     }))
 }
 

@@ -231,6 +231,20 @@ pub fn normalize_base_url(input: &str, allow_local: bool) -> Result<String, Stri
     Ok(format!("{}://{}{}{}", url.scheme(), host, port, path))
 }
 
+/// True when both normalized base URLs point at the same scheme, host and port.
+/// A stored key is only ever sent to the host it was saved for.
+pub(crate) fn same_host(a: &str, b: &str) -> bool {
+    match (Url::parse(a), Url::parse(b)) {
+        (Ok(a), Ok(b)) => {
+            a.scheme() == b.scheme()
+                && a.host_str().map(str::to_ascii_lowercase)
+                    == b.host_str().map(str::to_ascii_lowercase)
+                && a.port_or_known_default() == b.port_or_known_default()
+        }
+        _ => false,
+    }
+}
+
 /// Joins a normalized base and an endpoint path with exactly one slash.
 pub fn endpoint(base: &str, path: &str) -> String {
     format!(
@@ -464,6 +478,8 @@ pub fn collect_stream_completion(text: &str, key: &str) -> Result<Value, ProxyEr
     payloads.extend(parser.push(b"\n"));
     let mut content = String::new();
     let mut model: Option<String> = None;
+    let mut finish_reason: Option<String> = None;
+    let mut usage: Option<Value> = None;
     let mut chunks = 0usize;
     for payload in payloads {
         if payload == "[DONE]" {
@@ -479,6 +495,9 @@ pub fn collect_stream_completion(text: &str, key: &str) -> Result<Value, ProxyEr
                 None => ProxyError::new(code),
             });
         }
+        if chunk.get("usage").is_some_and(|value| !value.is_null()) {
+            usage = Some(chunk["usage"].clone());
+        }
         let Some(choice) = chunk["choices"]
             .as_array()
             .and_then(|choices| choices.first())
@@ -486,6 +505,9 @@ pub fn collect_stream_completion(text: &str, key: &str) -> Result<Value, ProxyEr
             continue;
         };
         chunks += 1;
+        if let Some(reason) = choice["finish_reason"].as_str() {
+            finish_reason = Some(reason.to_owned());
+        }
         if model.is_none() {
             model = chunk["model"].as_str().map(str::to_owned);
         }
@@ -503,8 +525,21 @@ pub fn collect_stream_completion(text: &str, key: &str) -> Result<Value, ProxyEr
     }
     Ok(serde_json::json!({
         "model": model,
-        "choices": [{ "index": 0, "message": { "role": "assistant", "content": content } }],
+        "usage": usage,
+        "choices": [{
+            "index": 0,
+            "message": { "role": "assistant", "content": content },
+            "finish_reason": finish_reason,
+        }],
     }))
+}
+
+/// Why the model stopped, when the provider said so. `length` means the
+/// output was cut off at the token cap and must not be treated as complete.
+pub fn completion_finish_reason(value: &Value) -> Option<String> {
+    value["choices"][0]["finish_reason"]
+        .as_str()
+        .map(str::to_owned)
 }
 
 pub fn completion_text(value: &Value) -> String {
@@ -654,6 +689,7 @@ pub(crate) fn foreign_origin(state: &AppState, headers: &HeaderMap) -> Option<Re
     })
 }
 
+#[derive(Clone)]
 pub(crate) struct StoredProxy {
     pub base_url: String,
     pub model_id: String,
@@ -935,7 +971,16 @@ pub async fn save(
             key.to_owned()
         }
         None => match load_proxy(&state, user_id).await {
-            Ok(Some(existing)) => existing.key,
+            Ok(Some(existing)) => {
+                if !same_host(&existing.base_url, &base_url) {
+                    return json_error(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "key_host_mismatch",
+                        "Enter the API key for the new host. The stored key is only reused for the saved host.",
+                    );
+                }
+                existing.key
+            }
             Ok(None) => {
                 return json_error(
                     StatusCode::UNPROCESSABLE_ENTITY,
@@ -1080,6 +1125,92 @@ pub async fn models(State(state): State<AppState>, jar: CookieJar) -> Response {
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct DiscoverModels {
+    pub base_url: String,
+    pub api_key: Option<String>,
+}
+
+/// Lists provider models for a draft connection that has not been saved yet.
+/// The key is used for this one request and is neither stored nor echoed. When
+/// the draft has no key, the stored key is reused only for the same host.
+pub async fn discover_models(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    Json(payload): Json<DiscoverModels>,
+) -> Response {
+    if let Some(response) = foreign_origin(&state, &headers) {
+        return response;
+    }
+    let user_id = match signed_in(&state, &jar).await {
+        Ok(user_id) => user_id,
+        Err(response) => return response,
+    };
+    let allow_local = allow_local_http();
+    let base_url = match normalize_base_url(&payload.base_url, allow_local) {
+        Ok(base_url) => base_url,
+        Err(message) => {
+            return json_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid_base_url",
+                message,
+            );
+        }
+    };
+    let typed = payload
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let key = match typed {
+        Some(key) => {
+            if key.len() > 512 || key.chars().any(char::is_whitespace) {
+                return json_error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "invalid_api_key",
+                    "The API key looks malformed.",
+                );
+            }
+            key.to_owned()
+        }
+        None => match load_proxy(&state, user_id).await {
+            Ok(Some(stored)) if same_host(&stored.base_url, &base_url) => stored.key,
+            Ok(Some(_)) => {
+                return json_error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "key_host_mismatch",
+                    "Enter the API key for the new host. The stored key is only reused for the saved host.",
+                );
+            }
+            Ok(None) => {
+                return json_error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "missing_api_key",
+                    "Enter the API key.",
+                );
+            }
+            Err(()) => {
+                return json_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "backend_error",
+                    "The stored key could not be read.",
+                );
+            }
+        },
+    };
+    match list_models(&base_url, &key, allow_local).await {
+        Ok(models) => Json(json!({ "available": true, "models": models })).into_response(),
+        Err(error) => Json(json!({
+            "available": false,
+            "models": [],
+            "error_code": error.code.as_str(),
+            "message": format!("{} You can still type the model ID manually; this does not mean chat is unsupported.", error.message()),
+        }))
+        .into_response(),
+    }
+}
+
 pub async fn disconnect(
     State(state): State<AppState>,
     jar: CookieJar,
@@ -1152,6 +1283,17 @@ data: {\"choices\":[{\"delta\":{\"content\":\"K\"},\"index\":0}]}\n\ndata: [DONE
         let value = collect_stream_completion(stream, "secret").unwrap();
         assert_eq!(completion_text(&value), "OK");
         assert_eq!(value["model"], "gemini-test");
+        assert_eq!(super::completion_finish_reason(&value), None);
+        let cut = collect_stream_completion(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"{\\\"fa\"}}],\"model\":\"m\"}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}],\"usage\":{\"completion_tokens\":23}}\n\ndata: [DONE]\n\n",
+            "secret",
+        )
+        .unwrap();
+        assert_eq!(
+            super::completion_finish_reason(&cut).as_deref(),
+            Some("length")
+        );
+        assert_eq!(cut["usage"]["completion_tokens"], 23);
         let empty = collect_stream_completion("data: {\"hello\":1}\n\n", "secret").unwrap_err();
         assert_eq!(empty.code, ProxyErrorCode::WrongEndpoint);
         let failed = collect_stream_completion(
