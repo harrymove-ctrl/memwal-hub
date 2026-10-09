@@ -15,3 +15,11 @@ Do not record a new Memory save. The attributable count is already 10. Show reca
 9. Download is the local report from the example, if you show it. Say it was not uploaded.
 
 Narration must call the example a sample and the chat the live run.
+
+## Bugs to fix, or work around while recording
+
+1. New chat can drop the first character if you type before the box is ready. Click the chat box and pause before typing.
+2. The agent page Run panel always returns a canned demo reply, even when the model is connected. Keep it off camera. Use Open chat.
+3. A short "What…" question can borrow memories from the previous question until the API deploy is live. Ask off-topic questions in 9 words or more. After that deploy, a plain question such as "What is the capital of France?" is searched on its own. Questions that start with "and", "but", or "so", or that say "that" or "it", still include the previous question.
+4. The bottom of the model setup dialog is cut off on a normal laptop. Scroll inside the dialog.
+5. Do not record on a phone and do not zoom the browser to 200%. Text contrast is low. Pinch zoom was blocked; the new frontend allows it. On a phone the chat list covers the messages, so use Hide chats.
