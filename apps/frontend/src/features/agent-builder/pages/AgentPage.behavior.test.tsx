@@ -377,6 +377,38 @@ describe("Agent behavior & QA repair tests", () => {
     });
   });
 
+  it("example Open chat keeps the dirty-revision dialog and Exit returns to idle", async () => {
+    mockFetch((call: Call) => {
+      if (call.url === "/model-proxy") return json(readyProxy);
+      if (call.url === "/memory/session") return json(memorySessionBody("verified"));
+      if (call.url === "/agent-connections") return json([]);
+      if (call.url === "/projects") return json([{ id: "proj-1", name: "Main Project" }]);
+      if (call.url === "/builder-agents/product-discovery") {
+        return json({ agent_key: "product-discovery", name: "LaunchLens", instructions: "Initial instructions", revision: 1 });
+      }
+      return undefined;
+    });
+
+    renderAgentApp("product-discovery");
+    await waitFor(() => expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("LaunchLens"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const instrBox = await screen.findByLabelText("System instructions");
+    fireEvent.change(instrBox, { target: { value: "Dirty while previewing" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Preview example" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Use saved version" }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Exit example" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Open chat" }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Exit example" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Preview example" })).toBeInTheDocument());
+  });
+
   it("in-flight run keeps its revision after a later save", async () => {
     const { service } = createMockRunService();
 
