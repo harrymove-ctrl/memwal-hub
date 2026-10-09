@@ -194,7 +194,7 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
   const [creating, setCreating] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [draftChoice, setDraftChoice] = useState(false);
-  const [chatsOpen, setChatsOpen] = useState(true);
+  const [chatsOpen, setChatsOpen] = useState(() => typeof window === "undefined" || typeof window.matchMedia !== "function" || window.matchMedia("(min-width: 768px)").matches);
   const [present, setPresent] = useState(false);
   useEffect(() => {
     if (!present) return;
@@ -599,7 +599,7 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
           next.set("conversation", chat.id);
           return next;
         });
-        input.current?.focus();
+        window.setTimeout(() => input.current?.focus(), 0);
       })
       .catch((error: unknown) => setHistoryError(error instanceof Error ? error.message : "The chat could not be created."))
       .finally(() => setCreating(false));

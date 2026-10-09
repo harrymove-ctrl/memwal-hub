@@ -13,3 +13,11 @@ Do not save new facts on camera unless a new write is authorized. The count is a
 7. New chat, switch back, reload. Transcripts stay in Postgres. Facts, when saved earlier, are Walrus blobs.
 
 Narration: the example is a sample. Chat is the live run. A Ready badge is not a conversation.
+
+## Bugs to fix, or work around while recording
+
+1. New chat can drop the first character if you type before the box is ready. After this build, focus waits until the new chat exists. If a character still disappears, click the box and pause before typing.
+2. The agent page Run panel still answers with a canned demo, even when ZRoute is connected. Do not type there. Use Open chat. Keep that panel off camera.
+3. A short question that starts with "and", "but", or "so", or that points at "that" or "it", still searches the previous question too. A plain "What is the capital of France?" no longer does, once this API build is deployed. Until you see that deploy, ask off-topic questions in 9 words or more.
+4. The model setup dialog is taller than a laptop screen. Scroll inside the dialog to reach Test connection. Do not assume the bottom is missing.
+5. Do not record on a phone, and do not use 200% browser zoom. Pinch zoom is allowed again after this frontend deploy. Text contrast is still low. On a phone the chat list sits on top of the messages; use Hide chats.

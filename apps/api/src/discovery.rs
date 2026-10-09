@@ -199,7 +199,7 @@ const FOLLOW_UP_MARKERS: &[&str] = &[
     "it", "its", "that", "this", "those", "these", "they", "them", "their", "there", "above",
     "earlier", "previous", "same", "again", "instead", "also", "too", "then",
 ];
-const FOLLOW_UP_OPENERS: &[&str] = &["and", "but", "so", "why", "how", "what"];
+const FOLLOW_UP_OPENERS: &[&str] = &["and", "but", "so"];
 
 fn words_of(text: &str) -> Vec<String> {
     text.split_whitespace()
@@ -1820,6 +1820,14 @@ mod tests {
 
         // An unrelated first message in a new chat has nothing to borrow.
         let plan = plan_recall(&[turn("user", "What is the capital of France?")]).unwrap();
+        assert_eq!(plan.query, "What is the capital of France?");
+        assert!(!plan.includes_previous_user_message);
+        let plan = plan_recall(&[
+            turn("user", "Should we build team workspaces?"),
+            turn("assistant", "Probably not yet."),
+            turn("user", "What is the capital of France?"),
+        ])
+        .unwrap();
         assert_eq!(plan.query, "What is the capital of France?");
         assert!(!plan.includes_previous_user_message);
 
