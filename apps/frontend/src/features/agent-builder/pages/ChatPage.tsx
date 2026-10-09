@@ -815,6 +815,7 @@ export function ChatPage({ ctx }: { ctx: ShellCtx }) {
                         const scope = turn.scope ?? (projectId ? { projectId, conversationId: conversationId || undefined } : undefined);
                         if (scope) void saveSelected(turn.id, turn.suggestions ?? [], scope, turn.agent);
                       }}
+                      autoSave={autoSave}
                     />
                   ),
                 )}
@@ -917,9 +918,10 @@ interface AssistantViewProps {
   onToggle: (factId: string, selected: boolean) => void;
   onEdit: (factId: string, text: string) => void;
   onSave: () => void;
+  autoSave: boolean;
 }
 
-function AssistantView({ turn, canSuggest, onRetry, onContinueWithoutMemory, onSuggest, onToggle, onEdit, onSave }: AssistantViewProps) {
+function AssistantView({ turn, canSuggest, onRetry, onContinueWithoutMemory, onSuggest, onToggle, onEdit, onSave, autoSave }: AssistantViewProps) {
   const memoryFailed = turn.error?.code === "memory_unavailable";
   const extraction = turn.extraction;
   return (
@@ -952,7 +954,7 @@ function AssistantView({ turn, canSuggest, onRetry, onContinueWithoutMemory, onS
           <div className="dc-row"><button type="button" className="btn" onClick={onSuggest}><RotateCcw size={12} /> Retry suggestions</button></div>
         </div>
       ) : null}
-      {turn.suggestions?.length ? <Suggestions items={turn.suggestions} onToggle={onToggle} onEdit={onEdit} onSave={onSave} /> : null}
+      {turn.suggestions?.length ? <Suggestions items={turn.suggestions} onToggle={onToggle} onEdit={onEdit} onSave={onSave} autoSave={autoSave} /> : null}
       {extraction?.state === "done" && !turn.suggestions?.length ? <p className="dc-muted">No durable facts were found in this message. Nothing was saved.</p> : null}
       {turn.status === "done" && !extraction && canSuggest && turn.content.trim() ? (
         <p className="dc-muted"><button type="button" className="link" onClick={onSuggest}>Suggest memories from this turn</button></p>
@@ -1108,6 +1110,29 @@ function HistoryRail({ projects, projectId, chats, conversationId, error, note, 
   const [editing, setEditing] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [menu, setMenu] = useState<string | null>(null);
+  const menuRoot = useRef<HTMLDivElement>(null);
+  const menuOpener = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (!menu) return;
+    const root = menuRoot.current;
+    root?.querySelector<HTMLButtonElement>("[role=menuitem]")?.focus();
+    const close = () => {
+      setMenu(null);
+      menuOpener.current?.focus();
+    };
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    const onPointer = (event: PointerEvent) => {
+      if (!root?.contains(event.target as Node)) close();
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onPointer);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPointer);
+    };
+  }, [menu]);
   return (
     <aside className={collapsed ? "dc-history is-collapsed" : "dc-history"} aria-label="Projects and chats">
       {error ? <p className="dc-muted" role="alert">{error} <button type="button" className="btn" onClick={onRetry}>Retry</button></p> : null}
@@ -1141,8 +1166,8 @@ function HistoryRail({ projects, projectId, chats, conversationId, error, note, 
               ) : (
                 <>
                   <button type="button" className="dc-chat-title" title={chat.title} aria-current={chat.id === conversationId ? "true" : undefined} onClick={() => onSelectChat(chat.id)}>{chat.title}</button>
-                  <div className="dc-chat-menu">
-                    <button type="button" aria-haspopup="menu" aria-expanded={menu === chat.id} aria-label={`Actions for ${chat.title}`} onClick={() => setMenu(menu === chat.id ? null : chat.id)}>⋯</button>
+                  <div className="dc-chat-menu" ref={menu === chat.id ? menuRoot : undefined}>
+                    <button type="button" aria-haspopup="menu" aria-expanded={menu === chat.id} aria-label={`Actions for ${chat.title}`} onClick={(event) => { menuOpener.current = event.currentTarget; setMenu(menu === chat.id ? null : chat.id); }}>⋯</button>
                     {menu === chat.id ? (
                       <div role="menu">
                         <button type="button" role="menuitem" onClick={() => { setEditing(chat.id); setTitle(chat.title); setMenu(null); }}>Rename</button>
@@ -1168,6 +1193,7 @@ interface SuggestionsProps {
   onToggle: (factId: string, selected: boolean) => void;
   onEdit: (factId: string, text: string) => void;
   onSave: () => void;
+  autoSave: boolean;
 }
 
 const STATE_LABEL: Record<FactState, string> = {
@@ -1178,9 +1204,12 @@ const STATE_LABEL: Record<FactState, string> = {
   uncertain: "Not confirmed",
 };
 
-function Suggestions({ items, onToggle, onEdit, onSave }: SuggestionsProps) {
+function Suggestions({ items, onToggle, onEdit, onSave, autoSave }: SuggestionsProps) {
   const savable = items.filter((item) => item.selected && (item.state === "suggested" || item.state === "failed" || item.state === "uncertain"));
   const retrying = savable.some((item) => item.state !== "suggested");
+  const hint = autoSave
+    ? "Auto-save is on. New suggestions are sent to this project's Walrus Memory when they arrive. Use the button only for a failed or unsent fact."
+    : `${savable.length} selected. Saving writes those facts to this project's Walrus Memory. Nothing is saved until you press the button, and only after Walrus confirms storage.`;
   return (
     <section className="dc-suggest" aria-label="Suggested memories">
       <h3>Suggested memories</h3>
@@ -1196,7 +1225,7 @@ function Suggestions({ items, onToggle, onEdit, onSave }: SuggestionsProps) {
             />
             <div className="dc-fact">
               {item.state === "suggested" ? (
-                <input className="dc-fact-input" value={item.text} aria-label="Edit suggested fact" onChange={(event) => onEdit(item.id, event.target.value)} />
+                <textarea className="dc-fact-input" rows={3} value={item.text} aria-label="Edit suggested fact" onChange={(event) => onEdit(item.id, event.target.value)} />
               ) : (
                 <span>{item.text}</span>
               )}
@@ -1218,7 +1247,7 @@ function Suggestions({ items, onToggle, onEdit, onSave }: SuggestionsProps) {
       </ul>
       <div className="dc-row">
         <button type="button" className="btn btn-primary" disabled={!savable.length} onClick={onSave}>{retrying ? "Retry selected" : `Save selected to project Memory${savable.length ? ` (${savable.length})` : ""}`}</button>
-        <span className="hint">{savable.length} selected. Saving writes those facts to this project's Walrus Memory. Nothing is saved until you press the button, and only after Walrus confirms storage.</span>
+        <span className="hint">{hint}</span>
       </div>
     </section>
   );

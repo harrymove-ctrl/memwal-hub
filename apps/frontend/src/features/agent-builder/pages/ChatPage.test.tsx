@@ -189,6 +189,8 @@ describe("ChatPage (mocked backend)", () => {
     fireEvent.click(button);
     fireEvent.click(await screen.findByRole("button", { name: "Actions for New chat" }));
     expect(screen.getByRole("menuitem", { name: "Archive" })).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menuitem", { name: "Archive" })).not.toBeInTheDocument());
     expect(created).toHaveLength(1);
     expect(created[0].body).toMatchObject({ request_id: expect.any(String) });
   });
