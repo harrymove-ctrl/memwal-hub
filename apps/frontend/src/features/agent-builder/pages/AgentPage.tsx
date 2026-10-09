@@ -5,7 +5,7 @@ import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { OpenSidebarButton, useIsMobile, type ShellCtx } from "../App";
 import type { AgentConfig, SectionId } from "../domain/types";
 import type { RunService } from "../services/run-service";
-import { memoryCapabilities } from "../domain/capabilities";
+import { memoryCapabilities, toolsForCapabilities } from "../domain/capabilities";
 import { useAgentConfig, useStore } from "../state/store";
 import { getAgentRevision, saveAgentRevision } from "../services/builder-agents";
 import { listProjects } from "../services/conversations";
@@ -34,11 +34,15 @@ export function AgentPage({ ctx, service }: { ctx: ShellCtx; service: RunService
   const { run, start, stop, busy } = useRun(active, agentId, false);
   const [editing, setEditing] = useState<SectionId | null>(null);
   const [save, setSave] = useState<SaveState>("idle");
+  const [hydrateError, setHydrateError] = useState<string | null>(null);
+  const [projectId, setProjectId] = useState<string>("");
   const [editingAgent, setEditingAgent] = useState(agentId);
   if (editingAgent !== agentId) {
     setEditingAgent(agentId);
     setSave("idle");
     setEditing(null);
+    setProjectId("");
+    setHydrateError(null);
   }
   const saveTimer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(saveTimer.current), []);
@@ -48,6 +52,8 @@ export function AgentPage({ ctx, service }: { ctx: ShellCtx; service: RunService
     void getAgentRevision(agentId)
       .then((row) => {
         if (cancelled) return;
+        setHydrateError(null);
+        if (row.project_id) setProjectId(row.project_id);
         dispatch({
           type: "updateAgent",
           agentId,
@@ -55,28 +61,32 @@ export function AgentPage({ ctx, service }: { ctx: ShellCtx; service: RunService
           revision: row.revision,
           instructions: row.instructions,
           projectId: row.project_id,
+          ...(row.tools ? { tools: toolsForCapabilities(row.tools) } : {}),
         });
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (!cancelled) setHydrateError("This agent could not be loaded from the server. The canvas is not showing the saved revision.");
+      });
     return () => {
       cancelled = true;
     };
   }, [agentId, dispatch]);
 
-  const [projectId, setProjectId] = useState<string>("");
+
   useEffect(() => {
     let cancelled = false;
     void listProjects()
       .then((rows) => {
-        if (!cancelled && rows.length > 0) {
-          setProjectId(rows[0].id);
-        }
+        if (cancelled || agent?.projectId || rows.length !== 1) return;
+        setProjectId(rows[0].id);
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (!cancelled) setHydrateError("Projects could not be loaded. Choose a project before a live run.");
+      });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [agent?.projectId]);
 
   type PendingIntent =
     | { type: "preview" }
@@ -181,7 +191,7 @@ export function AgentPage({ ctx, service }: { ctx: ShellCtx; service: RunService
     if (config.schedule) v.add("schedule");
     if (config.files?.length) v.add("files");
     if (config.identity || config.channels.length) v.add("channels");
-    if (config.tools.length) v.add("tools");
+    v.add("tools");
     if (config.subAgents.length) v.add("subAgents");
     if (config.skills.length) v.add("skills");
     return v;
@@ -224,6 +234,7 @@ export function AgentPage({ ctx, service }: { ctx: ShellCtx; service: RunService
         <nav className="crumbs" aria-label="Breadcrumb">
           <span>Agents</span><span aria-hidden>/</span><h1>{agent.name}</h1>
           {dirty ? <span className="unsaved">Unsaved changes</span> : null}
+          {hydrateError ? <span className="unsaved" role="alert">{hydrateError}</span> : null}
         </nav>
         <div className="actions">
           {dirty ? <button className="btn" onClick={() => dispatch({ type: "discardDraft", agentId })}>Discard</button> : null}

@@ -91,13 +91,7 @@ export function RunPanel({
   const send = () => {
     if (!canSend || sending.current) return;
     if (discovery) {
-      setText("");
-      if (onPreviewExample) {
-        onPreviewExample();
-      } else {
-        if (stage === "idle") setStage("files");
-        onNotify("Example run. This message was not sent to Memory, Console, or a live model.");
-      }
+      onNotify("Example preview. This text was not sent to a model or to Memory.");
       return;
     }
     sending.current = true;
@@ -126,7 +120,7 @@ export function RunPanel({
               Revision {run.revision}
             </span>
           ) : null}
-          {discovery ? <span>Example</span> : null}
+          {discovery ? <span className="chip">Example — no model calls or remote writes</span> : null}
         </p>
         {busy ? (
           <button className="run-stop" aria-label="Stop run" onClick={onStop}><Square size={10} /> Stop</button>
@@ -189,16 +183,29 @@ export function RunPanel({
           ) : null}
           {discovery && stage === "idle" && run.status === "idle" ? (
             <>
-              <p className="ev-text">Review product feedback using your saved strategy, past opportunities, and selected research files.</p>
+              <p className="ev-text">Live chat uses the saved agent. Preview example uses fixed sample files and does not call a model.</p>
               <button type="button" className="suggest" onClick={() => setText(SUGGESTED_PROMPT)}>{SUGGESTED_PROMPT}</button>
             </>
           ) : null}
           {groupEvents(run.events).map((item) => <EventView key={item.key} item={item} />)}
-          {discovery && (stage === "files" || stage === "review" || stage === "save") ? <DiscoveryFlow stage={stage} exampleMode onRead={beginRead} onSave={() => setStage("save")} onNotify={onNotify} /> : null}
-          {stage === "reading" ? <p className="run-meta">Example run · Reading selected files</p> : null}
-          {stage === "analyzing" ? <p className="run-meta">Example run · Analyzing example feedback</p> : null}
-          {stage === "reading" || stage === "analyzing" ? <button type="button" className="btn" onClick={() => { stopPlayback(); setStage("idle"); }}>Stop example</button> : null}
-          {stage !== "idle" ? <p className="run-meta">Example run</p> : null}
+          {discovery && stage === "reading" ? <p className="run-meta" role="status">Example — reading selected files</p> : null}
+          {discovery && stage === "analyzing" ? <p className="run-meta" role="status">Example — analyzing sample feedback</p> : null}
+          {discovery && (stage === "files" || stage === "review" || stage === "save") ? (
+            <>
+              <p className="run-meta" role="status">Example — no model calls or remote writes</p>
+              <DiscoveryFlow stage={stage} exampleMode onRead={beginRead} onSave={() => setStage("save")} onNotify={onNotify} />
+            </>
+          ) : null}
+          {discovery && stage !== "idle" ? (
+            <div className="composer-row">
+              <button type="button" className="btn" onClick={() => { stopPlayback(); setStage("idle"); }}>Exit example</button>
+              {onOpenChat ? (
+                <button type="button" className="btn" onClick={onOpenChat}>Open chat</button>
+              ) : chatTo ? (
+                <NavLink className="btn" to={chatTo}>Open chat</NavLink>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </div>
       {!pinned ? (
@@ -219,7 +226,7 @@ export function RunPanel({
           ) : null}
           <div className="composer-row">
 
-            <span className="hint">{busy ? "Wait for the run to finish or stop it" : "Enter to send · Shift+Enter for a new line"}</span>
+            <span className="hint">{discovery ? "Example preview. Enter does not send a live message." : busy ? "Wait for the run to finish or stop it" : "Enter to send · Shift+Enter for a new line"}</span>
             <button type="submit" className="send" aria-label="Send" disabled={!canSend}><ArrowUp size={13} /></button>
           </div>
         </form>

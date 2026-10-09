@@ -79,15 +79,15 @@ export function Sidebar({ onNotice, mobileOpen, onCloseMobile, hidden }: { onNot
             <PanelLeft size={14} />
           </button>
         </div>
-        <button className="sb-search" onClick={() => onNotice("Search is a demo entry point in the reference.")} aria-label="Search">
+        <button className="sb-search" onClick={() => onNotice("Search is not available in this workspace.")} aria-label="Search">
           <Search size={14} /> <span>Search...</span>
           <kbd>⌘</kbd><kbd>K</kbd>
         </button>
         <nav className="sb-nav" aria-label="Primary">
           <NavLink to="/builder/chat" className="sb-item"><MessageCircle size={14} /> Chat</NavLink>
-          <button className="sb-item" onClick={() => onNotice("Inbox is not available in this demo.")}><Inbox size={14} /> Inbox</button>
+          <button className="sb-item" onClick={() => onNotice("Inbox is not available in this workspace.")}><Inbox size={14} /> Inbox</button>
           <div className="sb-rule" />
-          <button className="sb-item" onClick={() => onNotice("Templates are not available in this demo.")}><Layers size={14} /> Templates</button>
+          <button className="sb-item" onClick={() => onNotice("Templates are not available in this workspace.")}><Layers size={14} /> Templates</button>
           <NavLink to="/builder/integrations" className="sb-item"><Blocks size={14} /> Integrations</NavLink>
           <NavLink to="/builder/skills" className="sb-item"><GraduationCap size={14} /> Skills</NavLink>
           <div className="sb-rule" />
@@ -101,10 +101,10 @@ export function Sidebar({ onNotice, mobileOpen, onCloseMobile, hidden }: { onNot
               {state.drafts[a.id] ? <span className="sb-dirty" title="Unsaved changes" aria-label="unsaved changes">•</span> : null}
             </NavLink>
           ))}
-          <button className="sb-item" onClick={() => onNotice("More agents is not available in this demo.")}><Plus size={14} /> More agents</button>
+          <button className="sb-item" onClick={() => onNotice("Adding agents from a catalog is not available. Create one from the agents page.")}><Plus size={14} /> More agents</button>
         </nav>
         <div className="sb-foot">
-          <button className="sb-item" onClick={() => onNotice("Usage details are not available in this demo.")}><BarChart3 size={14} /> Usage</button>
+          <button className="sb-item" onClick={() => onNotice("Usage details are not available in this workspace.")}><BarChart3 size={14} /> Usage</button>
           <button type="button" className="sb-item" onClick={() => setSettings(true)}><Settings2 size={14} /> Settings</button>
         </div>
         <section className="sb-connect" aria-labelledby="connect-h">

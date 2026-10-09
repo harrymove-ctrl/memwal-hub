@@ -1,12 +1,12 @@
 import { createContext, useContext, useEffect, useMemo, useReducer, type ReactNode } from "react";
-import type { Agent, AgentConfig, AgentId } from "../domain/types";
+import type { Agent, AgentConfig, AgentId, ToolRef } from "../domain/types";
 import { loadState, saveState, type PersistedState, type Viewport } from "./persist";
 
 export type Action =
   | { type: "editDraft"; agentId: AgentId; patch: Partial<AgentConfig> }
   | { type: "discardDraft"; agentId: AgentId }
   | { type: "commitDraft"; agentId: AgentId; name?: string; revision?: number; instructions?: string }
-  | { type: "updateAgent"; agentId: AgentId; name: string; revision: number; instructions?: string; projectId?: string }
+  | { type: "updateAgent"; agentId: AgentId; name: string; revision: number; instructions?: string; projectId?: string; tools?: ToolRef[] }
   | { type: "setSidebarCollapsed"; value: boolean }
   | { type: "dismissUsageNotice" }
   | { type: "setRunPanelHidden"; value: boolean }
@@ -71,6 +71,7 @@ export function reducer(s: PersistedState, a: Action): PersistedState {
                 ...x.config,
                 name: a.name,
                 instructions: draft ? x.config.instructions : (a.instructions ?? x.config.instructions),
+                tools: draft || !a.tools ? x.config.tools : a.tools,
               },
             };
           }),

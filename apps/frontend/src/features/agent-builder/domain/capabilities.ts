@@ -18,3 +18,15 @@ export function memoryCapabilities(tools: ToolRef[]): MemoryCapability[] {
   }
   return (["memwal_recall", "memwal_remember"] as const).filter((capability) => found.has(capability));
 }
+
+const CAPABILITY_TOOLS: Record<MemoryCapability, ToolRef> = {
+  memwal_recall: { id: "memwal_recall", name: "Recall project memory", app: "memory", technical: "memwal_recall", group: "read" },
+  memwal_remember: { id: "memwal_remember", name: "Save project memory", app: "memory", technical: "memwal_remember", group: "save" },
+};
+
+/** Tools a reload should show for the capabilities stored on a revision. */
+export function toolsForCapabilities(capabilities: readonly string[]): ToolRef[] {
+  return (["memwal_recall", "memwal_remember"] as const)
+    .filter((id) => capabilities.includes(id))
+    .map((id) => CAPABILITY_TOOLS[id]);
+}

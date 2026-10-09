@@ -25,5 +25,5 @@ export function saveAgentRevision(body: SaveAgentRevisionBody) {
 }
 
 export function getAgentRevision(agentKey: string) {
-  return requestJson<{ agent_key: string; name: string; instructions: string; revision: number; project_id?: string }>(`/builder-agents/${agentKey}`);
+  return requestJson<{ agent_key: string; name: string; instructions: string; revision: number; project_id?: string; tools?: string[] }>(`/builder-agents/${agentKey}`);
 }
