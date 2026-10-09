@@ -1,4 +1,4 @@
-# Hub William
+# bew-harness 
 
 Hub William brings shared agent accounts, coding tools, organizations and a
 browser Playground into one workspace. Local tools use a revocable gateway key;
